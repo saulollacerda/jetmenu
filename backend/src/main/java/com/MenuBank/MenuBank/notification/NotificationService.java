@@ -109,6 +109,45 @@ public class NotificationService {
     }
 
     /**
+     * Creates a notification informing the merchant that the customer (or the platform) asked
+     * to cancel an order and is waiting for an answer. The order itself is untouched — only
+     * accepting the request cancels it.
+     *
+     * <p>Deduplicates by (merchantId, type, orderId) so a redelivered iFood event does not pile
+     * up alerts for the same request.
+     *
+     * <p>{@code referenceData} carries the <strong>local</strong> order id, not the iFood one:
+     * the accept/deny endpoints are keyed by it, so the notification is directly actionable.
+     * The iFood identifier goes in {@code referenceDisplay}, which is what the merchant reads.
+     */
+    @Transactional
+    public Notification createOrderCancellationRequested(UUID orderId,
+                                                         String externalOrderId,
+                                                         UUID merchantId) {
+        String reference = orderId.toString();
+        Optional<Notification> existing = notificationRepository
+                .findByMerchantIdAndTypeAndReferenceDataAndStatusNot(
+                        merchantId, NotificationType.ORDER_CANCELLATION_REQUESTED,
+                        reference, NotificationStatus.RESOLVED);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        Notification created = Notification.builder()
+                .merchant(merchantRepository.getReferenceById(merchantId))
+                .type(NotificationType.ORDER_CANCELLATION_REQUESTED)
+                .title("Solicitação de cancelamento")
+                .message("O cliente solicitou o cancelamento do pedido " + externalOrderId
+                        + ". Aceite ou recuse a solicitação no iFood.")
+                .referenceData(reference)
+                .referenceDisplay(externalOrderId)
+                .status(NotificationStatus.UNREAD)
+                .createdAt(Instant.now())
+                .build();
+        return notificationRepository.save(created);
+    }
+
+    /**
      * Deletes every {@link NotificationType#MISSING_INGREDIENT} notification for the given
      * canonical name. Invoked when the merchant finally registers the ingredient, so the
      * alert disappears entirely instead of lingering as a resolved item.

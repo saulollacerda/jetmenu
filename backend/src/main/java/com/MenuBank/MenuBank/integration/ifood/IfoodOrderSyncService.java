@@ -28,8 +28,9 @@ import java.util.function.Supplier;
  * Orquestra o polling de eventos do iFood: busca eventos de todos os merchants
  * autorizados de uma vez (token é app-level), processa os eventos do ciclo de vida
  * (CONFIRMED importa cedo como PENDING, CONCLUDED solidifica para PAID, CANCELLED
- * cancela e tira dos ganhos) e reconhece todos os eventos recebidos — inclusive os
- * ignorados — para não acumular backlog na fila do iFood.
+ * cancela e tira dos ganhos, CANCELLATION_REQUESTED notifica o lojista sem mexer no
+ * status) e reconhece todos os eventos recebidos — inclusive os ignorados — para não
+ * acumular backlog na fila do iFood.
  *
  * <p>O {@code fullCode} é aceito com e sem o prefixo {@code ORDER_} (case-insensitive):
  * o polling real retorna eventos enxutos sem prefixo, mas os payloads de referência do
@@ -57,6 +58,13 @@ public class IfoodOrderSyncService {
     private static final String CONFIRMED = "CONFIRMED";
     private static final String CANCELLED = "CANCELLED";
     private static final String CONCLUDED = "CONCLUDED";
+    /**
+     * Emitido quando o cliente (ou a plataforma) pede o cancelamento e o lojista precisa
+     * responder. Nome do evento <strong>não verificado</strong> contra a doc oficial do iFood —
+     * validar na sandbox antes da homologação. A forma prefixada
+     * ({@code ORDER_CANCELLATION_REQUESTED}) é aceita pelo mesmo normalizador dos demais.
+     */
+    private static final String CANCELLATION_REQUESTED = "CANCELLATION_REQUESTED";
     private static final String ORDER_PREFIX = "ORDER_";
 
     /** Order details expire after 7 days, so an older event id can never come back meaningfully. */
@@ -180,6 +188,15 @@ public class IfoodOrderSyncService {
             case CANCELLED -> {
                 if (!importService.cancelOrder(event.getOrderId(), event.getMerchantId())) {
                     importOrder(token, event, OrderStatus.CANCELLED);
+                }
+            }
+            case CANCELLATION_REQUESTED -> {
+                // Pedido ainda não importado é trazido como PENDING primeiro: sem o pedido local
+                // o lojista não teria como aceitar nem recusar a solicitação. O status NÃO muda —
+                // uma solicitação sem resposta não pode tirar o pedido dos ganhos.
+                if (!importService.registerCancellationRequest(event.getOrderId(), event.getMerchantId())) {
+                    importOrder(token, event, OrderStatus.PENDING);
+                    importService.registerCancellationRequest(event.getOrderId(), event.getMerchantId());
                 }
             }
             default -> { /* apenas reconhecido, sem ação de negócio */ }

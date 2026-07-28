@@ -26,6 +26,8 @@ Não há máquina de estados local; as ações de escrita disponíveis são as e
 | `CONCLUDED` | não | importa completo com `status = PAID` (fallback: `CONFIRMED` perdido/anterior à feature) |
 | `CANCELLED` | sim | `status → CANCELLED` + notificação `ORDER_CANCELLED` (não precisa buscar detalhe) |
 | `CANCELLED` | não | `GET /orders/{id}` → importa com `status = CANCELLED` (404 → loga e pula) |
+| `CANCELLATION_REQUESTED` | sim | notificação `ORDER_CANCELLATION_REQUESTED` — **status inalterado** |
+| `CANCELLATION_REQUESTED` | não | `GET /orders/{id}` → importa com `status = PENDING`, depois notifica |
 
 Regras de transição:
 
@@ -34,6 +36,18 @@ Regras de transição:
 - `CONCLUDED` **nunca reverte** `CANCELLED`.
 - Eventos repetidos são idempotentes (no-op): `CONFIRMED` de pedido existente é ignorado, `CANCELLED`
   de pedido já cancelado não gera nova notificação, `CONCLUDED` de pedido já `PAID` não muda nada.
+
+### Solicitação de cancelamento do cliente
+
+O `CANCELLATION_REQUESTED` é o pedido de cancelamento feito pelo **cliente** (ou pela plataforma) que
+o lojista precisa responder. Ele **não muda o status local** — uma solicitação sem resposta não pode
+tirar o pedido dos ganhos nem dessincronizar o estado local do iFood. O único efeito é a notificação
+`ORDER_CANCELLATION_REQUESTED`, cujo `referenceData` carrega o **id local** do pedido (é por ele que a
+UI chama os endpoints de aceite/recusa) e o `referenceDisplay` carrega o id do iFood. Pedido já
+`CANCELLED` ou `TEST` não gera notificação. A notificação deduplica por `(merchant, tipo, pedido)`,
+então um evento reenviado não empilha alertas.
+
+O cancelamento de fato acontece só quando o lojista aceita (ou quando o `CANCELLED` chega depois).
 
 ### Cancelamento e ganhos
 
@@ -54,10 +68,26 @@ padrão de retry em 401 do `IfoodOrderSyncService` (401 → `handleUnauthorized(
 | Confirmar | `POST /orders/{id}/confirm` | `PENDING` (inalterado) | SLA de **8 min** para `DELIVERY` e `TAKEOUT`, independente do `orderTiming` |
 | Pronto para retirada | `PUT /orders/{id}/readyToPickup` | `READY` | Pedidos `TAKEOUT`, para notificar o cliente |
 | Despachar | `PUT /orders/{id}/dispatch` | `DELIVERED` | Pedidos `DELIVERY` com entrega própria, ao sair para entrega |
+| Listar motivos | `GET /orders/{id}/cancellationReasons` | — | Antes de cancelar: o lojista escolhe um motivo do iFood |
+| Cancelar | `POST /orders/{id}/requestCancellation` | `CANCELLED` | Cancelamento por iniciativa do lojista |
+| Aceitar cancelamento | `POST /orders/{id}/acceptCancellation` | `CANCELLED` | Resposta ao `CANCELLATION_REQUESTED` |
+| Recusar cancelamento | `POST /orders/{id}/denyCancellation` | inalterado | Resposta ao `CANCELLATION_REQUESTED` |
 
-> **Verbos HTTP não validados.** `PUT` para `readyToPickup`/`dispatch` vem do `HOMOLOGATION.md`;
-> `confirm` usa `POST`. Não foi possível conferir com a doc oficial do iFood — validar contra a
-> sandbox antes da homologação. Cada verbo está em uma única linha do `IfoodOrderActionClient`.
+> **Verbos HTTP e paths não validados.** `PUT` para `readyToPickup`/`dispatch` vem do
+> `HOMOLOGATION.md`; `confirm` e toda a família de cancelamento usam `POST`. Os segmentos de path do
+> cancelamento (`cancellationReasons`, `requestCancellation`, `acceptCancellation`,
+> `denyCancellation`), o corpo do `requestCancellation` (`{cancellationCode, reason}`), o formato dos
+> motivos (`{cancelCodeId, description}`) e o nome do evento `CANCELLATION_REQUESTED` foram
+> **inferidos**: não foi possível conferir com a doc oficial do iFood — validar contra a sandbox
+> antes da homologação. Cada verbo e cada segmento estão em uma única linha do
+> `IfoodOrderActionClient`; o nome do evento é uma constante do `IfoodOrderSyncService`.
+
+### Motivos de cancelamento
+
+A homologação exige que o lojista escolha entre os motivos **do iFood** — MenuBank nunca inventa um
+motivo. `GET /orders/{id}/cancellationReasons` devolve pares `{cancelCodeId, description}`; a UI
+mostra a `description` e devolve o `cancelCodeId` no `POST /cancel`. Os dois campos viajam juntos até
+a UI e de volta, sem tradução.
 
 Guard rails (rejeitam antes de chamar o iFood): pedido inexistente para o merchant (404), pedido com
 `origin != IFOOD`, sem `externalOrderId`, ou em status terminal (`CANCELLED`/`TEST`) → 409. Erros do
@@ -80,8 +110,14 @@ quando a janela acaba. A UI pode chamar uma vez e contar regressivamente a parti
 | POST | `/api/integrations/ifood/orders/{orderId}/ready-to-pickup` | `200` `{orderId, externalOrderId, status}` |
 | POST | `/api/integrations/ifood/orders/{orderId}/dispatch` | `200` `{orderId, externalOrderId, status}` |
 | GET | `/api/integrations/ifood/orders/{orderId}/confirmation-window` | `200` `{orderId, createdAt, deadline, remainingSeconds, expired}` |
+| GET | `/api/integrations/ifood/orders/{orderId}/cancellation-reasons` | `200` `[{cancelCodeId, description}]` |
+| POST | `/api/integrations/ifood/orders/{orderId}/cancel` | `200` `{orderId, externalOrderId, status}` |
+| POST | `/api/integrations/ifood/orders/{orderId}/cancellation-request/accept` | `200` `{orderId, externalOrderId, status}` |
+| POST | `/api/integrations/ifood/orders/{orderId}/cancellation-request/deny` | `200` `{orderId, externalOrderId, status}` |
 
-Nenhuma requisição tem corpo. Erros são `ProblemDetail` com `detail` em pt-BR.
+Só o `POST /cancel` tem corpo: `{"cancellationCode": "501", "reason": "PROBLEMAS DE SISTEMA"}` —
+`cancellationCode` é obrigatório (vazio → `400`) e `reason` é opcional. Erros são `ProblemDetail` com
+`detail` em pt-BR.
 
 ## Polling de eventos
 
@@ -289,4 +325,6 @@ resposta da API, mas não persistidos. Revisitar se algum dashboard precisar des
 
 > A entidade `Order` não tem campo de motivo/timestamp de cancelamento — o cancelamento é apenas a
 > troca de `status`; o `cancelReasonDescription` (quando disponível) vai no texto da notificação
-> `ORDER_CANCELLED`.
+> `ORDER_CANCELLED`. Pela mesma razão não há coluna de "cancelamento pendente": a solicitação do
+> cliente vive só na notificação `ORDER_CANCELLATION_REQUESTED`, que é o que a UI usa para oferecer
+> aceitar/recusar.

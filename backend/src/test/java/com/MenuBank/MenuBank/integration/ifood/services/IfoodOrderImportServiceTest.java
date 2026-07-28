@@ -686,6 +686,79 @@ class IfoodOrderImportServiceTest {
     }
 
     @Nested
+    @DisplayName("registerCancellationRequest()")
+    class RegisterCancellationRequest {
+
+        @Test
+        @DisplayName("deve notificar o lojista SEM alterar o status do pedido")
+        void shouldNotifyWithoutTouchingOrderStatus() {
+            Order order = existingOrder(OrderStatus.PENDING);
+            given(orderRepository.findByExternalOrderIdAndMerchantId("ord-1", merchantId))
+                    .willReturn(Optional.of(order));
+
+            boolean handled = importService.registerCancellationRequest("ord-1", "ifood-m1");
+
+            assertThat(handled).isTrue();
+            assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+            then(orderRepository).should(never()).save(any(Order.class));
+            then(notificationService).should()
+                    .createOrderCancellationRequested(order.getId(), "ord-1", merchantId);
+        }
+
+        @Test
+        @DisplayName("não deve notificar pedido já CANCELLED (nada a responder)")
+        void shouldNotNotifyCancelledOrder() {
+            Order order = existingOrder(OrderStatus.CANCELLED);
+            given(orderRepository.findByExternalOrderIdAndMerchantId("ord-1", merchantId))
+                    .willReturn(Optional.of(order));
+
+            boolean handled = importService.registerCancellationRequest("ord-1", "ifood-m1");
+
+            assertThat(handled).isTrue();
+            then(notificationService).should(never())
+                    .createOrderCancellationRequested(any(), anyString(), any());
+        }
+
+        @Test
+        @DisplayName("não deve notificar pedido de teste")
+        void shouldNotNotifyTestOrder() {
+            Order order = existingOrder(OrderStatus.TEST);
+            given(orderRepository.findByExternalOrderIdAndMerchantId("ord-1", merchantId))
+                    .willReturn(Optional.of(order));
+
+            boolean handled = importService.registerCancellationRequest("ord-1", "ifood-m1");
+
+            assertThat(handled).isTrue();
+            then(notificationService).should(never())
+                    .createOrderCancellationRequested(any(), anyString(), any());
+        }
+
+        @Test
+        @DisplayName("deve retornar false quando o pedido ainda não foi importado")
+        void shouldReturnFalseWhenOrderUnknown() {
+            given(orderRepository.findByExternalOrderIdAndMerchantId("ord-1", merchantId))
+                    .willReturn(Optional.empty());
+
+            boolean handled = importService.registerCancellationRequest("ord-1", "ifood-m1");
+
+            assertThat(handled).isFalse();
+            then(notificationService).should(never())
+                    .createOrderCancellationRequested(any(), anyString(), any());
+        }
+
+        @Test
+        @DisplayName("deve retornar false quando o merchant iFood é desconhecido")
+        void shouldReturnFalseWhenMerchantUnknown() {
+            given(merchantRepository.findByIfoodMerchantId("ifood-m1")).willReturn(Optional.empty());
+
+            boolean handled = importService.registerCancellationRequest("ord-1", "ifood-m1");
+
+            assertThat(handled).isFalse();
+            then(orderRepository).should(never()).save(any(Order.class));
+        }
+    }
+
+    @Nested
     @DisplayName("ficha do pedido")
     class OrderFicha {
 

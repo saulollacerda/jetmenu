@@ -1,24 +1,31 @@
 package com.MenuBank.MenuBank.integration.ifood;
 
 import com.MenuBank.MenuBank.auth.AuthHelper;
+import com.MenuBank.MenuBank.integration.ifood.dto.IfoodCancellationReasonResponse;
 import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderActionResponse;
+import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderCancelRequest;
 import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderConfirmationWindowResponse;
 import com.MenuBank.MenuBank.order.OrderStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.never;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -104,6 +111,94 @@ class IfoodOrderActionControllerTest {
                 .andExpect(jsonPath("$.deadline").value("2026-07-28T12:08:00"))
                 .andExpect(jsonPath("$.remainingSeconds").value(300))
                 .andExpect(jsonPath("$.expired").value(false));
+    }
+
+    // --- Cancelamento ----------------------------------------------------------------
+
+    @Test
+    @DisplayName("GET /{id}/cancellation-reasons retorna 200 com os motivos do iFood")
+    void cancellationReasons_returns200() throws Exception {
+        given(actionService.getCancellationReasons(merchantId, orderId)).willReturn(List.of(
+                new IfoodCancellationReasonResponse("501", "PROBLEMAS DE SISTEMA"),
+                new IfoodCancellationReasonResponse("506", "ITEM INDISPONÍVEL")));
+
+        mockMvc.perform(get(BASE + "/" + orderId + "/cancellation-reasons"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].cancelCodeId").value("501"))
+                .andExpect(jsonPath("$[0].description").value("PROBLEMAS DE SISTEMA"))
+                .andExpect(jsonPath("$[1].cancelCodeId").value("506"));
+    }
+
+    @Test
+    @DisplayName("POST /{id}/cancel retorna 200 com o pedido em CANCELLED")
+    void cancel_returns200() throws Exception {
+        given(actionService.cancel(eq(merchantId), eq(orderId), any()))
+                .willReturn(response(OrderStatus.CANCELLED));
+
+        mockMvc.perform(post(BASE + "/" + orderId + "/cancel")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"cancellationCode\":\"501\",\"reason\":\"PROBLEMAS DE SISTEMA\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELLED"));
+
+        ArgumentCaptor<IfoodOrderCancelRequest> captor =
+                ArgumentCaptor.forClass(IfoodOrderCancelRequest.class);
+        then(actionService).should().cancel(eq(merchantId), eq(orderId), captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().cancellationCode()).isEqualTo("501");
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().reason())
+                .isEqualTo("PROBLEMAS DE SISTEMA");
+    }
+
+    @Test
+    @DisplayName("POST /{id}/cancel sem código de motivo retorna 400")
+    void cancel_withoutCode_returns400() throws Exception {
+        mockMvc.perform(post(BASE + "/" + orderId + "/cancel")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"PROBLEMAS DE SISTEMA\"}"))
+                .andExpect(status().isBadRequest());
+
+        then(actionService).should(never()).cancel(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("POST /{id}/cancellation-request/accept retorna 200 com o pedido em CANCELLED")
+    void acceptCancellation_returns200() throws Exception {
+        given(actionService.acceptCancellation(merchantId, orderId))
+                .willReturn(response(OrderStatus.CANCELLED));
+
+        mockMvc.perform(post(BASE + "/" + orderId + "/cancellation-request/accept").with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELLED"));
+
+        then(actionService).should().acceptCancellation(merchantId, orderId);
+    }
+
+    @Test
+    @DisplayName("POST /{id}/cancellation-request/deny retorna 200 com o status local intacto")
+    void denyCancellation_returns200() throws Exception {
+        given(actionService.denyCancellation(merchantId, orderId))
+                .willReturn(response(OrderStatus.PENDING));
+
+        mockMvc.perform(post(BASE + "/" + orderId + "/cancellation-request/deny").with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"));
+
+        then(actionService).should().denyCancellation(merchantId, orderId);
+    }
+
+    @Test
+    @DisplayName("retorna 409 quando o iFood não tem solicitação de cancelamento pendente")
+    void answerWithoutPendingRequest_returns400() throws Exception {
+        given(actionService.acceptCancellation(merchantId, orderId))
+                .willThrow(new IfoodBadRequestException("no cancellation request"));
+
+        mockMvc.perform(post(BASE + "/" + orderId + "/cancellation-request/accept").with(csrf()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail")
+                        .value("O iFood recusou a ação: no cancellation request"));
     }
 
     // --- ProblemDetail mappings ------------------------------------------------------
