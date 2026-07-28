@@ -1,0 +1,322 @@
+package com.MenuBank.MenuBank.integration.ifood;
+
+import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderActionResponse;
+import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderConfirmationWindowResponse;
+import com.MenuBank.MenuBank.order.Order;
+import com.MenuBank.MenuBank.order.OrderOrigin;
+import com.MenuBank.MenuBank.order.OrderRepository;
+import com.MenuBank.MenuBank.order.OrderStatus;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
+
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+
+@ExtendWith(MockitoExtension.class)
+@DisplayName("IfoodOrderActionService")
+class IfoodOrderActionServiceTest {
+
+    private static final ZoneId BRAZIL_ZONE = ZoneId.of("America/Sao_Paulo");
+
+    @Mock private IfoodOrderActionClient actionClient;
+    @Mock private IfoodTokenService tokenService;
+    @Mock private OrderRepository orderRepository;
+
+    @InjectMocks
+    private IfoodOrderActionService actionService;
+
+    private UUID merchantId;
+    private UUID orderId;
+
+    @BeforeEach
+    void setUp() {
+        merchantId = UUID.randomUUID();
+        orderId = UUID.randomUUID();
+        lenient().when(tokenService.getAccessToken()).thenReturn("token-1");
+    }
+
+    private Order ifoodOrder(OrderStatus status) {
+        return Order.builder()
+                .id(orderId)
+                .status(status)
+                .origin(OrderOrigin.IFOOD)
+                .externalOrderId("ord_1")
+                .dateTime(LocalDateTime.now(BRAZIL_ZONE))
+                .build();
+    }
+
+    private void givenOrder(Order order) {
+        given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+    }
+
+    private static HttpClientErrorException unauthorized() {
+        return HttpClientErrorException.create(HttpStatus.UNAUTHORIZED, "Unauthorized",
+                HttpHeaders.EMPTY, new byte[0], StandardCharsets.UTF_8);
+    }
+
+    private static HttpClientErrorException clientError(HttpStatus status, String body) {
+        return HttpClientErrorException.create(status, status.getReasonPhrase(),
+                HttpHeaders.EMPTY, body.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+    }
+
+    @Nested
+    @DisplayName("confirm")
+    class Confirm {
+
+        @Test
+        @DisplayName("chama o iFood com o id externo e mantém o pedido em PENDING")
+        void confirm_shouldCallIfoodAndKeepOrderPending() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING));
+
+            IfoodOrderActionResponse response = actionService.confirm(merchantId, orderId);
+
+            then(actionClient).should().confirm("token-1", "ord_1");
+            then(orderRepository).should(never()).save(any());
+            assertThat(response.orderId()).isEqualTo(orderId);
+            assertThat(response.externalOrderId()).isEqualTo("ord_1");
+            assertThat(response.status()).isEqualTo(OrderStatus.PENDING);
+        }
+
+        @Test
+        @DisplayName("renova o token e repete uma única vez quando o iFood responde 401")
+        void confirm_shouldRefreshTokenAndRetryOnceOn401() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING));
+            given(tokenService.handleUnauthorized()).willReturn("token-2");
+            doThrow(unauthorized()).doNothing().when(actionClient).confirm(any(), any());
+
+            actionService.confirm(merchantId, orderId);
+
+            then(tokenService).should().handleUnauthorized();
+            then(actionClient).should().confirm("token-1", "ord_1");
+            then(actionClient).should().confirm("token-2", "ord_1");
+            then(actionClient).should(times(2)).confirm(any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("readyToPickup")
+    class ReadyToPickup {
+
+        @Test
+        @DisplayName("chama o iFood e move o pedido para READY")
+        void readyToPickup_shouldCallIfoodAndMoveOrderToReady() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            givenOrder(order);
+            doNothing().when(actionClient).readyToPickup("token-1", "ord_1");
+
+            IfoodOrderActionResponse response = actionService.readyToPickup(merchantId, orderId);
+
+            ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            assertThat(captor.getValue().getStatus()).isEqualTo(OrderStatus.READY);
+            assertThat(response.status()).isEqualTo(OrderStatus.READY);
+        }
+    }
+
+    @Nested
+    @DisplayName("dispatch")
+    class Dispatch {
+
+        @Test
+        @DisplayName("chama o iFood e move o pedido para DELIVERED")
+        void dispatch_shouldCallIfoodAndMoveOrderToDelivered() {
+            Order order = ifoodOrder(OrderStatus.READY);
+            givenOrder(order);
+            doNothing().when(actionClient).dispatch("token-1", "ord_1");
+
+            IfoodOrderActionResponse response = actionService.dispatch(merchantId, orderId);
+
+            ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            assertThat(captor.getValue().getStatus()).isEqualTo(OrderStatus.DELIVERED);
+            assertThat(response.status()).isEqualTo(OrderStatus.DELIVERED);
+        }
+    }
+
+    @Nested
+    @DisplayName("guard rails")
+    class GuardRails {
+
+        @Test
+        @DisplayName("pedido inexistente para o merchant gera IfoodOrderNotFoundException")
+        void unknownOrder_shouldThrowNotFound() {
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> actionService.confirm(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderNotFoundException.class);
+
+            then(actionClient).shouldHaveNoInteractions();
+        }
+
+        @Test
+        @DisplayName("pedido que não é do iFood é rejeitado")
+        void nonIfoodOrder_shouldBeRejected() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            order.setOrigin(OrderOrigin.MENUBANK);
+            givenOrder(order);
+
+            assertThatThrownBy(() -> actionService.confirm(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class)
+                    .extracting("reason")
+                    .isEqualTo(IfoodOrderActionNotAllowedException.Reason.NOT_IFOOD_ORDER);
+
+            then(actionClient).shouldHaveNoInteractions();
+        }
+
+        @Test
+        @DisplayName("pedido do iFood sem externalOrderId é rejeitado")
+        void missingExternalOrderId_shouldBeRejected() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            order.setExternalOrderId(null);
+            givenOrder(order);
+
+            assertThatThrownBy(() -> actionService.dispatch(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class)
+                    .extracting("reason")
+                    .isEqualTo(IfoodOrderActionNotAllowedException.Reason.MISSING_EXTERNAL_ID);
+
+            then(actionClient).shouldHaveNoInteractions();
+        }
+
+        @Test
+        @DisplayName("pedido cancelado é rejeitado")
+        void cancelledOrder_shouldBeRejected() {
+            givenOrder(ifoodOrder(OrderStatus.CANCELLED));
+
+            assertThatThrownBy(() -> actionService.readyToPickup(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class)
+                    .extracting("reason")
+                    .isEqualTo(IfoodOrderActionNotAllowedException.Reason.TERMINAL_STATUS);
+
+            then(actionClient).shouldHaveNoInteractions();
+        }
+
+        @Test
+        @DisplayName("pedido de teste é rejeitado")
+        void testOrder_shouldBeRejected() {
+            givenOrder(ifoodOrder(OrderStatus.TEST));
+
+            assertThatThrownBy(() -> actionService.confirm(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class)
+                    .extracting("reason")
+                    .isEqualTo(IfoodOrderActionNotAllowedException.Reason.TERMINAL_STATUS);
+
+            then(actionClient).shouldHaveNoInteractions();
+        }
+    }
+
+    @Nested
+    @DisplayName("erros do iFood")
+    class IfoodErrors {
+
+        @Test
+        @DisplayName("404 do iFood vira IfoodResourceNotFoundException e não muda o pedido")
+        void notFoundFromIfood_shouldTranslateAndLeaveOrderUntouched() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING));
+            willThrow(clientError(HttpStatus.NOT_FOUND, "{\"message\":\"order not found\"}"))
+                    .given(actionClient).dispatch("token-1", "ord_1");
+
+            assertThatThrownBy(() -> actionService.dispatch(merchantId, orderId))
+                    .isInstanceOf(IfoodResourceNotFoundException.class);
+
+            then(orderRepository).should(never()).save(any());
+        }
+
+        @Test
+        @DisplayName("400 do iFood vira IfoodBadRequestException com o detalhe da API")
+        void badRequestFromIfood_shouldCarryDetail() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING));
+            willThrow(clientError(HttpStatus.BAD_REQUEST, "{\"message\":\"order already confirmed\"}"))
+                    .given(actionClient).confirm("token-1", "ord_1");
+
+            assertThatThrownBy(() -> actionService.confirm(merchantId, orderId))
+                    .isInstanceOf(IfoodBadRequestException.class)
+                    .extracting("detail")
+                    .isEqualTo("order already confirmed");
+        }
+
+        @Test
+        @DisplayName("401 persistente após o refresh vira IfoodReauthorizationRequiredException")
+        void repeatedUnauthorized_shouldRequireReauthorization() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING));
+            given(tokenService.handleUnauthorized()).willReturn("token-2");
+            willThrow(unauthorized()).given(actionClient).confirm(any(), any());
+
+            assertThatThrownBy(() -> actionService.confirm(merchantId, orderId))
+                    .isInstanceOf(IfoodReauthorizationRequiredException.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("janela de confirmação (SLA de 8 minutos)")
+    class ConfirmationWindow {
+
+        @Test
+        @DisplayName("expõe o prazo e o tempo restante de um pedido recém-criado")
+        void window_shouldExposeDeadlineAndRemainingTime() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            LocalDateTime createdAt = LocalDateTime.now(BRAZIL_ZONE).minusMinutes(3);
+            order.setDateTime(createdAt);
+            givenOrder(order);
+
+            IfoodOrderConfirmationWindowResponse window =
+                    actionService.getConfirmationWindow(merchantId, orderId);
+
+            assertThat(window.orderId()).isEqualTo(orderId);
+            assertThat(window.createdAt()).isEqualTo(createdAt);
+            assertThat(window.deadline()).isEqualTo(createdAt.plusMinutes(8));
+            assertThat(window.remainingSeconds()).isBetween(290L, 300L);
+            assertThat(window.expired()).isFalse();
+        }
+
+        @Test
+        @DisplayName("zera o tempo restante e marca expirado quando o SLA já passou")
+        void window_shouldClampToZeroWhenSlaExpired() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            order.setDateTime(LocalDateTime.now(BRAZIL_ZONE).minusMinutes(20));
+            givenOrder(order);
+
+            IfoodOrderConfirmationWindowResponse window =
+                    actionService.getConfirmationWindow(merchantId, orderId);
+
+            assertThat(window.remainingSeconds()).isZero();
+            assertThat(window.expired()).isTrue();
+        }
+
+        @Test
+        @DisplayName("rejeita pedido que não é do iFood")
+        void window_shouldRejectNonIfoodOrder() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            order.setOrigin(OrderOrigin.ANOTA_AI);
+            givenOrder(order);
+
+            assertThatThrownBy(() -> actionService.getConfirmationWindow(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class);
+        }
+    }
+}
