@@ -17,6 +17,9 @@ import java.util.Map;
 @Component
 public class IfoodOrderClient {
 
+    /** iFood's request limit for POST /events/acknowledgment. */
+    private static final int ACKNOWLEDGMENT_BATCH_SIZE = 2000;
+
     private final RestClient restClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -48,7 +51,18 @@ public class IfoodOrderClient {
         }
     }
 
+    /**
+     * Acknowledges the given events. iFood caps each acknowledgment request at
+     * {@value #ACKNOWLEDGMENT_BATCH_SIZE} ids, so the list is split into batches.
+     */
     public void acknowledgeEvents(String accessToken, List<String> eventIds) {
+        for (int start = 0; start < eventIds.size(); start += ACKNOWLEDGMENT_BATCH_SIZE) {
+            int end = Math.min(start + ACKNOWLEDGMENT_BATCH_SIZE, eventIds.size());
+            acknowledgeBatch(accessToken, eventIds.subList(start, end));
+        }
+    }
+
+    private void acknowledgeBatch(String accessToken, List<String> eventIds) {
         restClient.post()
                 .uri("/events/acknowledgment")
                 .header("Authorization", "Bearer " + accessToken)
