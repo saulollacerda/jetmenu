@@ -201,6 +201,57 @@ class NotificationServiceTest {
     }
 
     @Nested
+    @DisplayName("createOrderCancellationRequested()")
+    class CreateOrderCancellationRequested {
+
+        private final UUID orderId = UUID.randomUUID();
+
+        @Test
+        @DisplayName("deve criar notificação ORDER_CANCELLATION_REQUESTED referenciando o id local do pedido")
+        void shouldCreateReferencingLocalOrderId() {
+            given(notificationRepository.findByMerchantIdAndTypeAndReferenceDataAndStatusNot(
+                    merchantId, NotificationType.ORDER_CANCELLATION_REQUESTED,
+                    orderId.toString(), NotificationStatus.RESOLVED))
+                    .willReturn(Optional.empty());
+            given(notificationRepository.save(any(Notification.class)))
+                    .willAnswer(inv -> inv.getArgument(0));
+
+            Notification result = notificationService.createOrderCancellationRequested(
+                    orderId, "ord-1", merchantId);
+
+            ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
+            then(notificationRepository).should().save(captor.capture());
+            Notification saved = captor.getValue();
+
+            assertThat(saved.getMerchant().getId()).isEqualTo(merchantId);
+            assertThat(saved.getType()).isEqualTo(NotificationType.ORDER_CANCELLATION_REQUESTED);
+            assertThat(saved.getReferenceData()).isEqualTo(orderId.toString());
+            assertThat(saved.getReferenceDisplay()).isEqualTo("ord-1");
+            assertThat(saved.getStatus()).isEqualTo(NotificationStatus.UNREAD);
+            assertThat(saved.getCreatedAt()).isNotNull();
+            assertThat(saved.getTitle()).contains("cancelamento");
+            assertThat(saved.getMessage()).contains("ord-1");
+            assertThat(result).isSameAs(saved);
+        }
+
+        @Test
+        @DisplayName("deve reaproveitar a notificação pendente do mesmo pedido em vez de duplicar")
+        void shouldReusePendingNotification() {
+            Notification existing = Notification.builder().id(notificationId).build();
+            given(notificationRepository.findByMerchantIdAndTypeAndReferenceDataAndStatusNot(
+                    merchantId, NotificationType.ORDER_CANCELLATION_REQUESTED,
+                    orderId.toString(), NotificationStatus.RESOLVED))
+                    .willReturn(Optional.of(existing));
+
+            Notification result = notificationService.createOrderCancellationRequested(
+                    orderId, "ord-1", merchantId);
+
+            assertThat(result).isSameAs(existing);
+            then(notificationRepository).should(never()).save(any(Notification.class));
+        }
+    }
+
+    @Nested
     @DisplayName("deleteMissingIngredient()")
     class DeleteMissingIngredient {
 

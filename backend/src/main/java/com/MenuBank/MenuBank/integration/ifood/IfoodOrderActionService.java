@@ -1,6 +1,8 @@
 package com.MenuBank.MenuBank.integration.ifood;
 
+import com.MenuBank.MenuBank.integration.ifood.dto.IfoodCancellationReasonResponse;
 import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderActionResponse;
+import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderCancelRequest;
 import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderConfirmationWindowResponse;
 import com.MenuBank.MenuBank.order.Order;
 import com.MenuBank.MenuBank.order.OrderOrigin;
@@ -25,6 +27,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * Merchant-driven iFood order lifecycle actions required by the Order module homologation:
@@ -38,8 +41,16 @@ import java.util.function.Consumer;
  *   <li>{@code confirm} keeps the order {@code PENDING} (it is already imported as
  *       {@code PENDING} on the CONFIRMED event);</li>
  *   <li>{@code readyToPickup} moves it to {@code READY};</li>
- *   <li>{@code dispatch} moves it to {@code DELIVERED}.</li>
+ *   <li>{@code dispatch} moves it to {@code DELIVERED};</li>
+ *   <li>{@code cancel} and {@code acceptCancellation} move it to {@code CANCELLED};</li>
+ *   <li>{@code denyCancellation} leaves the status untouched.</li>
  * </ul>
+ *
+ * <p>Cancellation is the second homologation criterion: the merchant picks a reason from
+ * {@link #getCancellationReasons(UUID, UUID)} (iFood's own list, never one of ours), and
+ * answers a customer/platform request with {@link #acceptCancellation(UUID, UUID)} or
+ * {@link #denyCancellation(UUID, UUID)}. Cancelling only removes the order from the earnings
+ * through the status change — there is no refund logic here.
  *
  * <p>Confirmation is never automatic: there is no scheduler here, the merchant decides.
  * {@link #getConfirmationWindow(UUID, UUID)} exposes the SLA countdown so the UI can show
@@ -112,6 +123,58 @@ public class IfoodOrderActionService {
     }
 
     /**
+     * Cancellation reasons iFood accepts for this order. Homologation requires the merchant
+     * to choose from iFood's own list, so the codes and descriptions are surfaced verbatim.
+     */
+    @Transactional(readOnly = true)
+    public List<IfoodCancellationReasonResponse> getCancellationReasons(UUID merchantId, UUID orderId) {
+        Order order = requireActionableOrder(merchantId, orderId);
+        return executeForResult(token -> actionClient.cancellationReasons(token, order.getExternalOrderId()));
+    }
+
+    /**
+     * Merchant-initiated cancellation. The local order only moves to {@code CANCELLED} after
+     * iFood accepts the request — which is what removes it from the earnings (dashboard and
+     * export aggregate {@code PAID} only). There is no refund logic: the status change is the
+     * whole effect.
+     */
+    @Transactional
+    public IfoodOrderActionResponse cancel(UUID merchantId, UUID orderId, IfoodOrderCancelRequest request) {
+        Order order = requireActionableOrder(merchantId, orderId);
+        execute(token -> actionClient.requestCancellation(
+                token, order.getExternalOrderId(), request.cancellationCode(), request.reason()));
+        log.info("[iFood] cancelamento do pedido {} solicitado pelo lojista — motivo '{}'",
+                order.getExternalOrderId(), request.cancellationCode());
+        return applyStatus(order, OrderStatus.CANCELLED);
+    }
+
+    /**
+     * Accepts a cancellation requested by the customer or by the platform: iFood settles the
+     * cancellation and the order is then cancelled locally.
+     */
+    @Transactional
+    public IfoodOrderActionResponse acceptCancellation(UUID merchantId, UUID orderId) {
+        Order order = requireActionableOrder(merchantId, orderId);
+        execute(token -> actionClient.acceptCancellation(token, order.getExternalOrderId()));
+        log.info("[iFood] solicitação de cancelamento do pedido {} aceita pelo lojista",
+                order.getExternalOrderId());
+        return applyStatus(order, OrderStatus.CANCELLED);
+    }
+
+    /**
+     * Rejects a cancellation requested by the customer or by the platform. The order keeps
+     * its local status — the request never touched it in the first place.
+     */
+    @Transactional
+    public IfoodOrderActionResponse denyCancellation(UUID merchantId, UUID orderId) {
+        Order order = requireActionableOrder(merchantId, orderId);
+        execute(token -> actionClient.denyCancellation(token, order.getExternalOrderId()));
+        log.info("[iFood] solicitação de cancelamento do pedido {} recusada pelo lojista",
+                order.getExternalOrderId());
+        return toResponse(order);
+    }
+
+    /**
      * Confirmation SLA countdown of an iFood order — {@code deadline = dateTime + 8 min},
      * with {@code remainingSeconds} clamped at zero once the window is gone.
      */
@@ -177,8 +240,20 @@ public class IfoodOrderActionService {
     }
 
     private void execute(Consumer<String> call) {
+        executeForResult(token -> {
+            call.accept(token);
+            return null;
+        });
+    }
+
+    /**
+     * Same as {@link #execute(Consumer)} for calls that read something back from iFood.
+     * Distinct name on purpose: overloading on {@code Consumer}/{@code Function} makes every
+     * lambda call site ambiguous.
+     */
+    private <T> T executeForResult(Function<String, T> call) {
         try {
-            withRetryOn401(call);
+            return withRetryOn401(call);
         } catch (HttpClientErrorException e) {
             throw translate(e);
         }
@@ -221,13 +296,13 @@ public class IfoodOrderActionService {
         }
     }
 
-    private void withRetryOn401(Consumer<String> call) {
+    private <T> T withRetryOn401(Function<String, T> call) {
         String token = tokenService.getAccessToken();
         try {
-            call.accept(token);
+            return call.apply(token);
         } catch (HttpClientErrorException.Unauthorized e) {
             log.info("[iFood] 401 recebido — forçando refresh do token e repetindo a ação do pedido");
-            call.accept(tokenService.handleUnauthorized());
+            return call.apply(tokenService.handleUnauthorized());
         }
     }
 

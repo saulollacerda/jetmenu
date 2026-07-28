@@ -233,6 +233,41 @@ public class IfoodOrderImportService {
         return true;
     }
 
+    /**
+     * Registra a solicitação de cancelamento feita pelo cliente (ou pela plataforma) e notifica
+     * o lojista — que ainda precisa aceitar ou recusar via
+     * {@code POST /api/integrations/ifood/orders/{id}/cancellation-request/{accept,deny}}.
+     *
+     * <p>O status do pedido <strong>não</strong> muda aqui: uma solicitação sem resposta não
+     * pode tirar o pedido dos ganhos nem deixar o estado local dessincronizado do iFood. Só o
+     * aceite (ou o evento CANCELLED que vem depois) cancela o pedido de fato.
+     *
+     * <p>Pedido já CANCELLED ou TEST não gera notificação — não há nada a responder.
+     *
+     * @return {@code true} se o pedido existe localmente (evento tratado);
+     *         {@code false} para acionar o import completo como fallback.
+     */
+    @Transactional
+    public boolean registerCancellationRequest(String externalOrderId, String ifoodMerchantId) {
+        Optional<Order> orderOpt = findExistingOrder(externalOrderId, ifoodMerchantId);
+        if (orderOpt.isEmpty()) {
+            return false;
+        }
+
+        Order order = orderOpt.get();
+        if (order.getStatus() == OrderStatus.CANCELLED || order.getStatus() == OrderStatus.TEST) {
+            log.info("[iFood] solicitação de cancelamento do pedido {} ignorada — status {}",
+                    externalOrderId, order.getStatus());
+            return true;
+        }
+
+        notificationService.createOrderCancellationRequested(
+                order.getId(), externalOrderId, order.getMerchant().getId());
+        log.info("[iFood] cliente solicitou o cancelamento do pedido {} — lojista notificado",
+                externalOrderId);
+        return true;
+    }
+
     private Optional<Order> findExistingOrder(String externalOrderId, String ifoodMerchantId) {
         return merchantRepository.findByIfoodMerchantId(ifoodMerchantId)
                 .flatMap(merchant -> orderRepository.findByExternalOrderIdAndMerchantId(

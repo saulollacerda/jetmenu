@@ -1,8 +1,11 @@
 package com.MenuBank.MenuBank.integration.ifood;
 
 import com.MenuBank.MenuBank.auth.AuthHelper;
+import com.MenuBank.MenuBank.integration.ifood.dto.IfoodCancellationReasonResponse;
 import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderActionResponse;
+import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderCancelRequest;
 import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderConfirmationWindowResponse;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -11,19 +14,26 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
  * Merchant-driven iFood order lifecycle actions required by the Order module homologation.
- * The three actions are modelled as POST sub-resources of the local order because they are
+ * Each action is modelled as a POST sub-resource of the local order because they are
  * commands pushed to iFood, not updates of a MenuBank resource; each returns the local
  * order status resulting from the action.
  *
  * <p>{@code GET /confirmation-window} supports the 8-minute confirmation SLA countdown in
  * the UI. Confirmation itself is always a merchant decision — nothing here auto-confirms.
+ *
+ * <p>Cancellation spans three endpoints: {@code GET /cancellation-reasons} feeds the picker
+ * with iFood's own reasons, {@code POST /cancel} cancels on the merchant's initiative, and
+ * {@code POST /cancellation-request/{accept,deny}} answers a request raised by the customer
+ * or by the platform.
  *
  * <p>All error responses are {@link ProblemDetail} with pt-BR details.
  */
@@ -55,6 +65,43 @@ public class IfoodOrderActionController {
     public ResponseEntity<IfoodOrderActionResponse> dispatch(@PathVariable UUID orderId, Authentication auth) {
         UUID merchantId = authHelper.getMerchantId(auth);
         return ResponseEntity.ok(actionService.dispatch(merchantId, orderId));
+    }
+
+    /**
+     * Cancellation reasons offered by iFood for this order. The merchant must pick one of
+     * these — MenuBank never invents a reason.
+     */
+    @GetMapping("/{orderId}/cancellation-reasons")
+    public ResponseEntity<List<IfoodCancellationReasonResponse>> cancellationReasons(
+            @PathVariable UUID orderId, Authentication auth) {
+        UUID merchantId = authHelper.getMerchantId(auth);
+        return ResponseEntity.ok(actionService.getCancellationReasons(merchantId, orderId));
+    }
+
+    /** Merchant-initiated cancellation, carrying the {@code cancelCodeId} the merchant chose. */
+    @PostMapping("/{orderId}/cancel")
+    public ResponseEntity<IfoodOrderActionResponse> cancel(
+            @PathVariable UUID orderId,
+            @Valid @RequestBody IfoodOrderCancelRequest request,
+            Authentication auth) {
+        UUID merchantId = authHelper.getMerchantId(auth);
+        return ResponseEntity.ok(actionService.cancel(merchantId, orderId, request));
+    }
+
+    /** Accepts a cancellation requested by the customer or by the platform. */
+    @PostMapping("/{orderId}/cancellation-request/accept")
+    public ResponseEntity<IfoodOrderActionResponse> acceptCancellation(
+            @PathVariable UUID orderId, Authentication auth) {
+        UUID merchantId = authHelper.getMerchantId(auth);
+        return ResponseEntity.ok(actionService.acceptCancellation(merchantId, orderId));
+    }
+
+    /** Rejects a cancellation requested by the customer or by the platform. */
+    @PostMapping("/{orderId}/cancellation-request/deny")
+    public ResponseEntity<IfoodOrderActionResponse> denyCancellation(
+            @PathVariable UUID orderId, Authentication auth) {
+        UUID merchantId = authHelper.getMerchantId(auth);
+        return ResponseEntity.ok(actionService.denyCancellation(merchantId, orderId));
     }
 
     @GetMapping("/{orderId}/confirmation-window")

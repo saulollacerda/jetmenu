@@ -291,6 +291,56 @@ class IfoodOrderSyncServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("evento CANCELLATION_REQUESTED")
+    class CancellationRequestedEvent {
+
+        @Test
+        @DisplayName("notifica o lojista sem buscar o detalhe nem mexer no status do pedido")
+        void shouldRegisterRequestOnExistingOrderWithoutFetchingDetail() {
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willReturn(List.of(event("evt-1", "CANCELLATION_REQUESTED", "ord-1")));
+            given(importService.registerCancellationRequest("ord-1", "ifood-m1")).willReturn(true);
+
+            syncService.syncOrders();
+
+            then(orderClient).should(never()).getOrderDetail(anyString(), anyString());
+            then(importService).should(never()).importOrder(any(), any(), any());
+            then(importService).should(never()).cancelOrder(anyString(), anyString());
+            then(orderClient).should().acknowledgeEvents("token-1", List.of("evt-1"));
+        }
+
+        @Test
+        @DisplayName("pedido ainda não importado é importado como PENDING antes de registrar a solicitação")
+        void shouldImportUnknownOrderBeforeRegisteringRequest() {
+            IfoodOrderDetailResponse detail = detail("ord-1");
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willReturn(List.of(event("evt-1", "CANCELLATION_REQUESTED", "ord-1")));
+            given(importService.registerCancellationRequest("ord-1", "ifood-m1"))
+                    .willReturn(false)
+                    .willReturn(true);
+            given(orderClient.getOrderDetail("token-1", "ord-1")).willReturn(raw(detail));
+
+            syncService.syncOrders();
+
+            then(importService).should().importOrder(detail, OrderStatus.PENDING, rawOf(detail));
+            then(importService).should(times(2)).registerCancellationRequest("ord-1", "ifood-m1");
+            then(orderClient).should().acknowledgeEvents("token-1", List.of("evt-1"));
+        }
+
+        @Test
+        @DisplayName("aceita a variante ORDER_CANCELLATION_REQUESTED (case-insensitive)")
+        void shouldAcceptOrderPrefixedVariant() {
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willReturn(List.of(event("evt-1", "order_cancellation_requested", "ord-1")));
+            given(importService.registerCancellationRequest("ord-1", "ifood-m1")).willReturn(true);
+
+            syncService.syncOrders();
+
+            then(importService).should().registerCancellationRequest("ord-1", "ifood-m1");
+        }
+    }
+
     @Test
     @DisplayName("evento fora de CONFIRMED/CANCELLED/CONCLUDED é apenas reconhecido, sem ação")
     void shouldOnlyAcknowledgeIgnoredEvents() {
@@ -305,6 +355,7 @@ class IfoodOrderSyncServiceTest {
         then(importService).should(never()).importOrder(any(), any(), any());
         then(importService).should(never()).concludeOrder(anyString(), anyString());
         then(importService).should(never()).cancelOrder(anyString(), anyString());
+        then(importService).should(never()).registerCancellationRequest(anyString(), anyString());
         then(orderClient).should().acknowledgeEvents("token-1", List.of("evt-2", "evt-3"));
     }
 

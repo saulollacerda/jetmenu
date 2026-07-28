@@ -1,6 +1,8 @@
 package com.MenuBank.MenuBank.integration.ifood;
 
+import com.MenuBank.MenuBank.integration.ifood.dto.IfoodCancellationReasonResponse;
 import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderActionResponse;
+import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderCancelRequest;
 import com.MenuBank.MenuBank.integration.ifood.dto.IfoodOrderConfirmationWindowResponse;
 import com.MenuBank.MenuBank.order.Order;
 import com.MenuBank.MenuBank.order.OrderOrigin;
@@ -24,6 +26,7 @@ import org.springframework.web.client.HttpServerErrorException;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -219,6 +222,169 @@ class IfoodOrderActionServiceTest {
 
             then(actionClient).should(times(1)).dispatch(any(), any());
             then(orderRepository).should(never()).save(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("motivos de cancelamento")
+    class CancellationReasons {
+
+        @Test
+        @DisplayName("devolve os motivos do iFood com código e descrição")
+        void reasons_shouldReturnIfoodReasons() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING));
+            given(actionClient.cancellationReasons("token-1", "ord_1")).willReturn(List.of(
+                    new IfoodCancellationReasonResponse("501", "PROBLEMAS DE SISTEMA"),
+                    new IfoodCancellationReasonResponse("506", "ITEM INDISPONÍVEL")));
+
+            List<IfoodCancellationReasonResponse> reasons =
+                    actionService.getCancellationReasons(merchantId, orderId);
+
+            assertThat(reasons).hasSize(2);
+            assertThat(reasons.get(0).cancelCodeId()).isEqualTo("501");
+            assertThat(reasons.get(1).description()).isEqualTo("ITEM INDISPONÍVEL");
+        }
+
+        @Test
+        @DisplayName("renova o token e repete uma única vez quando o iFood responde 401")
+        void reasons_shouldRefreshTokenAndRetryOnceOn401() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING));
+            given(tokenService.handleUnauthorized()).willReturn("token-2");
+            given(actionClient.cancellationReasons("token-1", "ord_1")).willThrow(unauthorized());
+            given(actionClient.cancellationReasons("token-2", "ord_1")).willReturn(List.of());
+
+            assertThat(actionService.getCancellationReasons(merchantId, orderId)).isEmpty();
+
+            then(tokenService).should().handleUnauthorized();
+        }
+
+        @Test
+        @DisplayName("rejeita pedido já cancelado — não há motivo a escolher")
+        void reasons_shouldRejectCancelledOrder() {
+            givenOrder(ifoodOrder(OrderStatus.CANCELLED));
+
+            assertThatThrownBy(() -> actionService.getCancellationReasons(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class)
+                    .extracting("reason")
+                    .isEqualTo(IfoodOrderActionNotAllowedException.Reason.TERMINAL_STATUS);
+
+            then(actionClient).shouldHaveNoInteractions();
+        }
+    }
+
+    @Nested
+    @DisplayName("cancelamento pedido pelo lojista")
+    class RequestCancellation {
+
+        @Test
+        @DisplayName("envia o código do motivo ao iFood e só então cancela o pedido local")
+        void cancel_shouldCallIfoodAndCancelLocalOrder() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            givenOrder(order);
+            doNothing().when(actionClient)
+                    .requestCancellation("token-1", "ord_1", "501", "PROBLEMAS DE SISTEMA");
+
+            IfoodOrderActionResponse response = actionService.cancel(merchantId, orderId,
+                    new IfoodOrderCancelRequest("501", "PROBLEMAS DE SISTEMA"));
+
+            ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            assertThat(captor.getValue().getStatus()).isEqualTo(OrderStatus.CANCELLED);
+            assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
+        }
+
+        @Test
+        @DisplayName("pedido recusado pelo iFood não cancela o pedido local")
+        void cancel_shouldLeaveOrderUntouchedWhenIfoodRejects() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            givenOrder(order);
+            willThrow(clientError(HttpStatus.BAD_REQUEST, "{\"message\":\"cancellation not allowed\"}"))
+                    .given(actionClient).requestCancellation("token-1", "ord_1", "501", null);
+
+            assertThatThrownBy(() -> actionService.cancel(merchantId, orderId,
+                    new IfoodOrderCancelRequest("501", null)))
+                    .isInstanceOf(IfoodBadRequestException.class)
+                    .extracting("detail")
+                    .isEqualTo("cancellation not allowed");
+
+            assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+            then(orderRepository).should(never()).save(any());
+        }
+
+        @Test
+        @DisplayName("pedido já cancelado é rejeitado antes de chamar o iFood")
+        void cancel_shouldRejectCancelledOrder() {
+            givenOrder(ifoodOrder(OrderStatus.CANCELLED));
+
+            assertThatThrownBy(() -> actionService.cancel(merchantId, orderId,
+                    new IfoodOrderCancelRequest("501", null)))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class)
+                    .extracting("reason")
+                    .isEqualTo(IfoodOrderActionNotAllowedException.Reason.TERMINAL_STATUS);
+
+            then(actionClient).shouldHaveNoInteractions();
+        }
+    }
+
+    @Nested
+    @DisplayName("resposta à solicitação de cancelamento do cliente")
+    class AnswerCancellationRequest {
+
+        @Test
+        @DisplayName("aceitar chama o iFood e cancela o pedido local")
+        void accept_shouldCallIfoodAndCancelLocalOrder() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            givenOrder(order);
+            doNothing().when(actionClient).acceptCancellation("token-1", "ord_1");
+
+            IfoodOrderActionResponse response = actionService.acceptCancellation(merchantId, orderId);
+
+            ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            assertThat(captor.getValue().getStatus()).isEqualTo(OrderStatus.CANCELLED);
+            assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
+        }
+
+        @Test
+        @DisplayName("recusar chama o iFood e mantém o status local intacto")
+        void deny_shouldCallIfoodAndKeepLocalStatus() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            givenOrder(order);
+            doNothing().when(actionClient).denyCancellation("token-1", "ord_1");
+
+            IfoodOrderActionResponse response = actionService.denyCancellation(merchantId, orderId);
+
+            then(orderRepository).should(never()).save(any());
+            assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+            assertThat(response.status()).isEqualTo(OrderStatus.PENDING);
+        }
+
+        @Test
+        @DisplayName("aceite recusado pelo iFood não cancela o pedido local")
+        void accept_shouldLeaveOrderUntouchedWhenIfoodRejects() {
+            Order order = ifoodOrder(OrderStatus.PENDING);
+            givenOrder(order);
+            willThrow(clientError(HttpStatus.BAD_REQUEST, "{\"message\":\"no cancellation request\"}"))
+                    .given(actionClient).acceptCancellation("token-1", "ord_1");
+
+            assertThatThrownBy(() -> actionService.acceptCancellation(merchantId, orderId))
+                    .isInstanceOf(IfoodBadRequestException.class);
+
+            assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+            then(orderRepository).should(never()).save(any());
+        }
+
+        @Test
+        @DisplayName("pedido de teste é rejeitado antes de chamar o iFood")
+        void deny_shouldRejectTestOrder() {
+            givenOrder(ifoodOrder(OrderStatus.TEST));
+
+            assertThatThrownBy(() -> actionService.denyCancellation(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class)
+                    .extracting("reason")
+                    .isEqualTo(IfoodOrderActionNotAllowedException.Reason.TERMINAL_STATUS);
+
+            then(actionClient).shouldHaveNoInteractions();
         }
     }
 
