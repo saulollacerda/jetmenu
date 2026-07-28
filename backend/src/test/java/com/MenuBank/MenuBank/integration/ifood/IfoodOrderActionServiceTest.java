@@ -8,6 +8,7 @@ import com.MenuBank.MenuBank.order.Order;
 import com.MenuBank.MenuBank.order.OrderOrigin;
 import com.MenuBank.MenuBank.order.OrderRepository;
 import com.MenuBank.MenuBank.order.OrderStatus;
+import com.MenuBank.MenuBank.order.OrderType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -20,6 +21,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
@@ -63,12 +65,18 @@ class IfoodOrderActionServiceTest {
         lenient().when(tokenService.getAccessToken()).thenReturn("token-1");
     }
 
+    /** Order with an unknown (null) orderType — the shape of everything imported before V27. */
     private Order ifoodOrder(OrderStatus status) {
+        return ifoodOrder(status, null);
+    }
+
+    private Order ifoodOrder(OrderStatus status, OrderType orderType) {
         return Order.builder()
                 .id(orderId)
                 .status(status)
                 .origin(OrderOrigin.IFOOD)
                 .externalOrderId("ord_1")
+                .orderType(orderType)
                 .dateTime(LocalDateTime.now(BRAZIL_ZONE))
                 .build();
     }
@@ -119,6 +127,47 @@ class IfoodOrderActionServiceTest {
             then(actionClient).should().confirm("token-2", "ord_1");
             then(actionClient).should(times(2)).confirm(any(), any());
         }
+
+        @Test
+        @DisplayName("repete uma vez em falha transitória (5xx) para não perder o SLA de 8 minutos")
+        void confirm_shouldRetryOnceOnTransientServerError() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING));
+            doThrow(HttpServerErrorException.create(HttpStatus.SERVICE_UNAVAILABLE, "Service Unavailable",
+                    HttpHeaders.EMPTY, new byte[0], StandardCharsets.UTF_8))
+                    .doNothing().when(actionClient).confirm(any(), any());
+
+            IfoodOrderActionResponse response = actionService.confirm(merchantId, orderId);
+
+            then(actionClient).should(times(2)).confirm("token-1", "ord_1");
+            assertThat(response.status()).isEqualTo(OrderStatus.PENDING);
+        }
+
+        @Test
+        @DisplayName("propaga a falha transitória quando as duas tentativas falham")
+        void confirm_shouldGiveUpAfterTwoTransientFailures() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING));
+            willThrow(HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "Bad Gateway",
+                    HttpHeaders.EMPTY, new byte[0], StandardCharsets.UTF_8))
+                    .given(actionClient).confirm(any(), any());
+
+            assertThatThrownBy(() -> actionService.confirm(merchantId, orderId))
+                    .isInstanceOf(HttpServerErrorException.class);
+
+            then(actionClient).should(times(2)).confirm("token-1", "ord_1");
+        }
+
+        @Test
+        @DisplayName("não repete em 4xx — o iFood recusou a ação, repetir só duplicaria o erro")
+        void confirm_shouldNotRetryOnClientError() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING));
+            willThrow(clientError(HttpStatus.BAD_REQUEST, "{\"message\":\"order already confirmed\"}"))
+                    .given(actionClient).confirm(any(), any());
+
+            assertThatThrownBy(() -> actionService.confirm(merchantId, orderId))
+                    .isInstanceOf(IfoodBadRequestException.class);
+
+            then(actionClient).should(times(1)).confirm(any(), any());
+        }
     }
 
     @Nested
@@ -158,6 +207,21 @@ class IfoodOrderActionServiceTest {
             then(orderRepository).should().save(captor.capture());
             assertThat(captor.getValue().getStatus()).isEqualTo(OrderStatus.DELIVERED);
             assertThat(response.status()).isEqualTo(OrderStatus.DELIVERED);
+        }
+
+        @Test
+        @DisplayName("não repete em falha transitória — só o confirm tem SLA e retry curto")
+        void dispatch_shouldNotRetryOnTransientServerError() {
+            givenOrder(ifoodOrder(OrderStatus.READY));
+            willThrow(HttpServerErrorException.create(HttpStatus.SERVICE_UNAVAILABLE, "Service Unavailable",
+                    HttpHeaders.EMPTY, new byte[0], StandardCharsets.UTF_8))
+                    .given(actionClient).dispatch(any(), any());
+
+            assertThatThrownBy(() -> actionService.dispatch(merchantId, orderId))
+                    .isInstanceOf(HttpServerErrorException.class);
+
+            then(actionClient).should(times(1)).dispatch(any(), any());
+            then(orderRepository).should(never()).save(any());
         }
     }
 
@@ -393,6 +457,90 @@ class IfoodOrderActionServiceTest {
                     .isEqualTo(IfoodOrderActionNotAllowedException.Reason.TERMINAL_STATUS);
 
             then(actionClient).shouldHaveNoInteractions();
+        }
+    }
+
+    @Nested
+    @DisplayName("guard rails de tipo do pedido")
+    class OrderTypeGuardRails {
+
+        @Test
+        @DisplayName("readyToPickup aceita pedido TAKEOUT")
+        void readyToPickup_shouldAcceptTakeout() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING, OrderType.TAKEOUT));
+
+            actionService.readyToPickup(merchantId, orderId);
+
+            then(actionClient).should().readyToPickup("token-1", "ord_1");
+        }
+
+        @Test
+        @DisplayName("readyToPickup rejeita pedido DELIVERY")
+        void readyToPickup_shouldRejectDelivery() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING, OrderType.DELIVERY));
+
+            assertThatThrownBy(() -> actionService.readyToPickup(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class)
+                    .extracting("reason")
+                    .isEqualTo(IfoodOrderActionNotAllowedException.Reason.NOT_A_TAKEOUT_ORDER);
+
+            then(actionClient).shouldHaveNoInteractions();
+        }
+
+        @Test
+        @DisplayName("readyToPickup rejeita pedido DINE_IN")
+        void readyToPickup_shouldRejectDineIn() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING, OrderType.DINE_IN));
+
+            assertThatThrownBy(() -> actionService.readyToPickup(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class)
+                    .extracting("reason")
+                    .isEqualTo(IfoodOrderActionNotAllowedException.Reason.NOT_A_TAKEOUT_ORDER);
+        }
+
+        @Test
+        @DisplayName("dispatch aceita pedido DELIVERY")
+        void dispatch_shouldAcceptDelivery() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING, OrderType.DELIVERY));
+
+            actionService.dispatch(merchantId, orderId);
+
+            then(actionClient).should().dispatch("token-1", "ord_1");
+        }
+
+        @Test
+        @DisplayName("dispatch rejeita pedido TAKEOUT")
+        void dispatch_shouldRejectTakeout() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING, OrderType.TAKEOUT));
+
+            assertThatThrownBy(() -> actionService.dispatch(merchantId, orderId))
+                    .isInstanceOf(IfoodOrderActionNotAllowedException.class)
+                    .extracting("reason")
+                    .isEqualTo(IfoodOrderActionNotAllowedException.Reason.NOT_A_DELIVERY_ORDER);
+
+            then(actionClient).shouldHaveNoInteractions();
+        }
+
+        @Test
+        @DisplayName("tipo desconhecido (null, pedidos anteriores à V27) não bloqueia nenhuma ação")
+        void unknownOrderType_shouldNotBlockAnyAction() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING, null));
+
+            actionService.readyToPickup(merchantId, orderId);
+            actionService.dispatch(merchantId, orderId);
+
+            then(actionClient).should().readyToPickup("token-1", "ord_1");
+            then(actionClient).should().dispatch("token-1", "ord_1");
+        }
+
+        @Test
+        @DisplayName("confirm não depende do tipo — o SLA vale para DELIVERY e TAKEOUT")
+        void confirm_shouldIgnoreOrderType() {
+            givenOrder(ifoodOrder(OrderStatus.PENDING, OrderType.DINE_IN));
+
+            actionService.confirm(merchantId, orderId);
+
+            then(actionClient).should().confirm("token-1", "ord_1");
         }
     }
 

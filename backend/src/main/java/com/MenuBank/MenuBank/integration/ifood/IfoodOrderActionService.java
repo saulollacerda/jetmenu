@@ -8,6 +8,7 @@ import com.MenuBank.MenuBank.order.Order;
 import com.MenuBank.MenuBank.order.OrderOrigin;
 import com.MenuBank.MenuBank.order.OrderRepository;
 import com.MenuBank.MenuBank.order.OrderStatus;
+import com.MenuBank.MenuBank.order.OrderType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -15,6 +16,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -71,6 +74,10 @@ public class IfoodOrderActionService {
 
     private static final ZoneId BRAZIL_ZONE = ZoneId.of("America/Sao_Paulo");
 
+    /** Attempts for {@code confirm} on transient failures — see {@link #executeWithSlaRetry}. */
+    private static final int SLA_MAX_ATTEMPTS = 2;
+    private static final long SLA_RETRY_DELAY_MILLIS = 300L;
+
     /** Statuses on which no lifecycle action may be pushed to iFood. */
     private static final Set<OrderStatus> TERMINAL_STATUSES =
             EnumSet.of(OrderStatus.CANCELLED, OrderStatus.TEST);
@@ -91,7 +98,8 @@ public class IfoodOrderActionService {
     @Transactional
     public IfoodOrderActionResponse confirm(UUID merchantId, UUID orderId) {
         Order order = requireActionableOrder(merchantId, orderId);
-        execute(token -> actionClient.confirm(token, order.getExternalOrderId()));
+        // Confirmation applies to every order type — the 8-minute SLA covers DELIVERY and TAKEOUT.
+        executeWithSlaRetry(token -> actionClient.confirm(token, order.getExternalOrderId()));
         // No local transition: the order was already imported as PENDING on the CONFIRMED event.
         return toResponse(order);
     }
@@ -99,6 +107,8 @@ public class IfoodOrderActionService {
     @Transactional
     public IfoodOrderActionResponse readyToPickup(UUID merchantId, UUID orderId) {
         Order order = requireActionableOrder(merchantId, orderId);
+        requireOrderType(order, OrderType.TAKEOUT,
+                IfoodOrderActionNotAllowedException.Reason.NOT_A_TAKEOUT_ORDER);
         execute(token -> actionClient.readyToPickup(token, order.getExternalOrderId()));
         return applyStatus(order, OrderStatus.READY);
     }
@@ -106,6 +116,8 @@ public class IfoodOrderActionService {
     @Transactional
     public IfoodOrderActionResponse dispatch(UUID merchantId, UUID orderId) {
         Order order = requireActionableOrder(merchantId, orderId);
+        requireOrderType(order, OrderType.DELIVERY,
+                IfoodOrderActionNotAllowedException.Reason.NOT_A_DELIVERY_ORDER);
         execute(token -> actionClient.dispatch(token, order.getExternalOrderId()));
         return applyStatus(order, OrderStatus.DELIVERED);
     }
@@ -197,6 +209,22 @@ public class IfoodOrderActionService {
         return order;
     }
 
+    /**
+     * Enforces the iFood homologation rule that ties {@code readyToPickup} to {@code TAKEOUT}
+     * and {@code dispatch} to {@code DELIVERY}.
+     *
+     * <p>A {@code null} {@code orderType} is NOT a mismatch: it means "unknown", which is the
+     * case for every manual order and for everything imported before the column existed.
+     * Blocking those would break orders already in the database, so only a known and
+     * contradicting type is rejected.
+     */
+    private void requireOrderType(Order order, OrderType required,
+                                  IfoodOrderActionNotAllowedException.Reason reason) {
+        if (order.getOrderType() != null && order.getOrderType() != required) {
+            throw new IfoodOrderActionNotAllowedException(reason);
+        }
+    }
+
     private Order requireIfoodOrder(UUID merchantId, UUID orderId) {
         Order order = orderRepository.findByIdAndMerchantId(orderId, merchantId)
                 .orElseThrow(() -> new IfoodOrderNotFoundException(orderId));
@@ -228,6 +256,43 @@ public class IfoodOrderActionService {
             return withRetryOn401(call);
         } catch (HttpClientErrorException e) {
             throw translate(e);
+        }
+    }
+
+    /**
+     * {@link #execute(Consumer)} plus one short retry on transient failures ({@code 5xx} and
+     * network errors). Only {@code confirm} uses it: it is the single action under a hard
+     * deadline, and a blip at minute seven of the 8-minute SLA costs the merchant the order.
+     * {@code dispatch}/{@code readyToPickup} have no deadline, so there a transient failure
+     * surfaces immediately and the merchant retries by hand.
+     *
+     * <p>{@code 4xx} is never retried — iFood rejected the action, repeating only duplicates
+     * the error. The window burned here is at most {@value #SLA_RETRY_DELAY_MILLIS} ms.
+     */
+    private void executeWithSlaRetry(Consumer<String> call) {
+        RuntimeException lastTransient = null;
+        for (int attempt = 1; attempt <= SLA_MAX_ATTEMPTS; attempt++) {
+            try {
+                execute(call);
+                return;
+            } catch (HttpServerErrorException | ResourceAccessException e) {
+                lastTransient = e;
+                log.warn("[iFood] falha transitória ao confirmar o pedido (tentativa {}/{}): {}",
+                        attempt, SLA_MAX_ATTEMPTS, e.getMessage());
+                if (attempt < SLA_MAX_ATTEMPTS) {
+                    sleepBeforeRetry();
+                }
+            }
+        }
+        throw lastTransient;
+    }
+
+    private void sleepBeforeRetry() {
+        try {
+            Thread.sleep(SLA_RETRY_DELAY_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while retrying the iFood confirmation", e);
         }
     }
 

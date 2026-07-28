@@ -123,6 +123,9 @@ public class IfoodOrderActionController {
             case MISSING_EXTERNAL_ID ->
                     "Este pedido não tem identificador do iFood, então não é possível atualizá-lo.";
             case TERMINAL_STATUS -> "Pedido cancelado ou de teste não pode ser atualizado no iFood.";
+            case NOT_A_TAKEOUT_ORDER ->
+                    "Só é possível marcar como pronto para retirada um pedido de retirada.";
+            case NOT_A_DELIVERY_ORDER -> "Só é possível despachar um pedido de entrega.";
         });
     }
 

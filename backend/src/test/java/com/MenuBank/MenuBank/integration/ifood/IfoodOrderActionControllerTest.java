@@ -250,6 +250,30 @@ class IfoodOrderActionControllerTest {
     }
 
     @Test
+    @DisplayName("retorna 409 ao marcar como pronto para retirada um pedido que não é de retirada")
+    void readyToPickupOnNonTakeout_returns409() throws Exception {
+        given(actionService.readyToPickup(merchantId, orderId)).willThrow(new IfoodOrderActionNotAllowedException(
+                IfoodOrderActionNotAllowedException.Reason.NOT_A_TAKEOUT_ORDER));
+
+        mockMvc.perform(post(BASE + "/" + orderId + "/ready-to-pickup").with(csrf()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail")
+                        .value("Só é possível marcar como pronto para retirada um pedido de retirada."));
+    }
+
+    @Test
+    @DisplayName("retorna 409 ao despachar um pedido que não é de entrega")
+    void dispatchOnNonDelivery_returns409() throws Exception {
+        given(actionService.dispatch(merchantId, orderId)).willThrow(new IfoodOrderActionNotAllowedException(
+                IfoodOrderActionNotAllowedException.Reason.NOT_A_DELIVERY_ORDER));
+
+        mockMvc.perform(post(BASE + "/" + orderId + "/dispatch").with(csrf()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail")
+                        .value("Só é possível despachar um pedido de entrega."));
+    }
+
+    @Test
     @DisplayName("retorna 404 quando o iFood não encontra o pedido")
     void notFoundOnIfood_returns404() throws Exception {
         given(actionService.dispatch(merchantId, orderId)).willThrow(new IfoodResourceNotFoundException());

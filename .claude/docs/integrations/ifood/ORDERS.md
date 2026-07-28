@@ -1,9 +1,10 @@
 # iFood — Orders
 
-MenuBank consome pedidos do iFood via **polling de eventos** (não webhook). São processados três
-eventos do ciclo de vida: `CONFIRMED` (importa o pedido cedo), `CANCELLED` (cancela e tira dos ganhos)
-e `CONCLUDED` (solidifica). Os demais (`PLACED`, `DISPATCHED`, `READY_TO_PICKUP`, etc.) são apenas
-reconhecidos (acknowledged) para não voltarem na fila, sem nenhuma ação de negócio.
+MenuBank consome pedidos do iFood via **polling de eventos** (não webhook). São processados quatro
+eventos do ciclo de vida: `CONFIRMED` (importa o pedido cedo), `CANCELLED` (cancela e tira dos ganhos),
+`CONCLUDED` (solidifica) e `CANCELLATION_REQUESTED` (cliente pediu cancelamento — só notifica). Os
+demais (`PLACED`, `DISPATCHED`, `READY_TO_PICKUP`, etc.) são apenas reconhecidos (acknowledged) para
+não voltarem na fila, sem nenhuma ação de negócio.
 
 **Base URL:** `https://merchant-api.ifood.com.br/order/v1.0`
 
@@ -15,7 +16,8 @@ loja/entrega, somado a `deliveryTimeInSeconds`). Como o `CONCLUDED` chega **auto
 o app nunca chame `confirm`/`startPreparation`/`dispatch`, ele funciona como *safety net*: qualquer
 pedido cujo `CONFIRMED` tenha sido perdido (ou anterior a esta feature) é importado nesse momento.
 Não há máquina de estados local; as ações de escrita disponíveis são as exigidas pela homologação
-(`confirm`, `readyToPickup`, `dispatch`) — ver [Ações do ciclo de vida](#ações-do-ciclo-de-vida-escrita).
+(`confirm`, `readyToPickup`, `dispatch` e a família de cancelamento) — ver
+[Ações do ciclo de vida](#ações-do-ciclo-de-vida-escrita).
 `startPreparation` não é implementado (não é exigido na homologação).
 
 | Evento | Pedido já existe? | Ação |
@@ -94,6 +96,16 @@ Guard rails (rejeitam antes de chamar o iFood): pedido inexistente para o mercha
 iFood: 404 → 404, 401 persistente → reautorização (409), demais `4xx` → 400 com o detalhe da API.
 O status local só muda **depois** de o iFood aceitar a ação.
 
+**Tipo do pedido.** A homologação amarra `readyToPickup` a `TAKEOUT` e `dispatch` a `DELIVERY`, e o
+backend recusa a combinação errada com 409 (`Order.orderType` conhecido e contraditório). `orderType`
+**nulo não bloqueia**: é o valor de todo pedido manual e de tudo importado antes da V27, e recusar
+esses quebraria a base existente. `confirm` não depende do tipo.
+
+**Retry em falha transitória.** Só o `confirm` repete (2 tentativas, 300 ms de intervalo) em `5xx` e
+erro de rede: é a única ação com prazo, e um blip no sétimo minuto do SLA custa o pedido ao lojista.
+`dispatch`/`readyToPickup` não repetem — sem prazo, o erro sobe na hora e o lojista tenta de novo.
+Nenhuma ação repete em `4xx`.
+
 ### SLA de confirmação (8 minutos)
 
 Regra: `deadline = Order.dateTime + 8 min` (`Order.dateTime` já é `createdAt` convertido para
@@ -116,8 +128,11 @@ quando a janela acaba. A UI pode chamar uma vez e contar regressivamente a parti
 | POST | `/api/integrations/ifood/orders/{orderId}/cancellation-request/deny` | `200` `{orderId, externalOrderId, status}` |
 
 Só o `POST /cancel` tem corpo: `{"cancellationCode": "501", "reason": "PROBLEMAS DE SISTEMA"}` —
-`cancellationCode` é obrigatório (vazio → `400`) e `reason` é opcional. Erros são `ProblemDetail` com
-`detail` em pt-BR.
+`cancellationCode` é obrigatório (vazio → `400`) e `reason` é opcional. As demais não têm corpo.
+
+Erros são `ProblemDetail` com `detail` em pt-BR — inclusive
+`409 "Só é possível marcar como pronto para retirada um pedido de retirada."` e
+`409 "Só é possível despachar um pedido de entrega."` para o tipo errado.
 
 ## Polling de eventos
 
