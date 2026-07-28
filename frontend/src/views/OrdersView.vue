@@ -40,6 +40,7 @@ import type { OrderFichaLineRequest } from '@/types/OrderFicha'
 import { includeService } from '@/services/includeService'
 import { orderFichaService } from '@/services/orderFichaService'
 import { useToast } from '@/composables/useToast'
+import IfoodOrderTicketModal from '@/components/IfoodOrderTicketModal.vue'
 
 const router = useRouter()
 const { showToast } = useToast()
@@ -516,6 +517,21 @@ async function viewDetail(o: OrderResponse) {
     if (token === detailRequestToken) detailPending.value = false
   }
 }
+// --- Comanda do iFood ----------------------------------------------------
+// A comanda vive em componente próprio (IfoodOrderTicketModal); aqui só abrimos,
+// fechamos e recarregamos a lista quando uma ação muda o status do pedido.
+const ticketOrder = ref<OrderResponse | null>(null)
+
+function openTicket(o: OrderResponse) {
+  ticketOrder.value = o
+}
+function closeTicket() {
+  ticketOrder.value = null
+}
+function onTicketUpdated() {
+  orderStore.fetchPage({}, true).catch(() => {})
+}
+
 function closeDetail() {
   // Invalidate the in-flight request: it must not reopen or repopulate the modal.
   detailRequestToken++
@@ -887,6 +903,14 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
               {{ marginLabel(o) }}
             </span>
             <span style="display: flex; gap: 5px; justify-content: flex-end">
+              <UIRowAction
+                v-if="o.origin === 'IFOOD'"
+                icon="receipt"
+                color="emerald"
+                label="Comanda"
+                :data-testid="`order-${o.id}-ticket-button`"
+                @click="openTicket(o)"
+              />
               <UIRowAction
                 icon="eye"
                 color="gray"
@@ -2035,6 +2059,14 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
         <UIBtn variant="danger" icon="trash" @click="handleDelete">Excluir</UIBtn>
       </template>
     </UIModal>
+
+    <!-- Comanda do pedido do iFood -->
+    <IfoodOrderTicketModal
+      v-if="ticketOrder"
+      :order="ticketOrder"
+      @updated="onTicketUpdated"
+      @close="closeTicket"
+    />
   </div>
 </template>
 
