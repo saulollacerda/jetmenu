@@ -1,4 +1,4 @@
-// Design tokens — mirrors menubank handoff (ui.jsx UI constants).
+// Design tokens — mirrors jetmenu handoff (ui.jsx UI constants).
 export const UI = {
   bg: '#f6f7f9',
   bgSoft: '#fafbfc',

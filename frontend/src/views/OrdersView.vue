@@ -74,7 +74,7 @@ const editingOrderId = ref<string | null>(null)
 const form = ref<OrderRequest>({
   customerId: '',
   customerName: '',
-  origin: 'MENUBANK',
+  origin: 'JETMENU',
   items: [{ productId: '', quantity: 1, extraIngredients: [] }],
 })
 
@@ -365,7 +365,7 @@ const STATUS_PILL: Record<string, { color: 'amber' | 'emerald' | 'rose' | 'blue'
 function originLabel(o: OrderOrigin | undefined): string {
   if (o === 'ANOTA_AI') return 'Anota.AI'
   if (o === 'IFOOD') return 'iFood'
-  return 'MenuBank'
+  return 'JetMenu'
 }
 function originColor(o: OrderOrigin | undefined): 'blue' | 'rose' | 'violet' {
   if (o === 'ANOTA_AI') return 'blue'
@@ -416,7 +416,7 @@ function openCreate() {
   form.value = {
     customerId: '',
     customerName: '',
-    origin: 'MENUBANK',
+    origin: 'JETMENU',
     feeId: '',
     items: [{ productId: '', quantity: 1, extraIngredients: [], excludedIncludeIds: [] }],
   }
@@ -1285,7 +1285,7 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
             </UIField>
             <UIField label="Canal">
               <UISelect v-model="form.origin" data-testid="order-origin-select">
-                <option value="MENUBANK">MenuBank</option>
+                <option value="JETMENU">JetMenu</option>
                 <option value="ANOTA_AI">Anota.AI</option>
                 <option value="IFOOD">iFood</option>
               </UISelect>

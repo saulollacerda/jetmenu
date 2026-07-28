@@ -46,7 +46,7 @@ async function doImport() {
 <template>
   <UIModal
     title="Importar cardápio do iFood"
-    subtitle="Traz seus produtos e categorias do iFood para o MenuBank — assim os pedidos chegam sem erros de produto não cadastrado."
+    subtitle="Traz seus produtos e categorias do iFood para o JetMenu — assim os pedidos chegam sem erros de produto não cadastrado."
     :width="560"
     title-test-id="ifood-import-modal-title"
     @close="emit('close')"

@@ -116,7 +116,7 @@ function planDescription(plan: PlanResponse): string {
   const description = plan.features?.description
   return typeof description === 'string'
     ? description
-    : 'Acesso completo a todas as funcionalidades do menubank.'
+    : 'Acesso completo a todas as funcionalidades do JetMenu.'
 }
 
 function planFeatures(plan: PlanResponse): string[] {

@@ -4,7 +4,7 @@ import type { UserResponse } from '@/types/User'
 
 export const authService = {
   /**
-   * Links the authenticated Supabase user to a MenuBank merchant (just-in-time,
+   * Links the authenticated Supabase user to a JetMenu merchant (just-in-time,
    * idempotent on the backend). Called on first authenticated access.
    */
   async provision(request: ProvisionRequest): Promise<UserResponse> {

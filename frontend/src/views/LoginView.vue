@@ -170,7 +170,7 @@ async function handleSubmit() {
           </div>
         </div>
 
-        <div :style="{ fontSize: '11.5px', color: '#64748b' }">© 2026 menubank · v 2.4</div>
+        <div :style="{ fontSize: '11.5px', color: '#64748b' }">© 2026 jetmenu · v 2.4</div>
       </div>
     </div>
 

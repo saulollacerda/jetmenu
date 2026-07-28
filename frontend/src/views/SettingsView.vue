@@ -222,7 +222,7 @@ const billingStatusDetail = computed(() => {
   const sub = billingSubscription.value
   if (!sub) return ''
   if (sub.status === 'PENDING') {
-    return 'Escolha um plano e conclua o pagamento para começar a usar o MenuBank.'
+    return 'Escolha um plano e conclua o pagamento para começar a usar o JetMenu.'
   }
   if (sub.status === 'TRIAL' && sub.trialEndsAt) {
     return `Seu teste grátis termina em ${formatDate(sub.trialEndsAt)}. Assine para não perder o acesso.`
@@ -233,7 +233,7 @@ const billingStatusDetail = computed(() => {
   if (sub.status === 'PAST_DUE') {
     return 'Há um pagamento pendente. Renove a assinatura para manter o acesso.'
   }
-  return 'Sua assinatura está cancelada. Assine um plano para continuar usando o MenuBank.'
+  return 'Sua assinatura está cancelada. Assine um plano para continuar usando o JetMenu.'
 })
 
 function formatBRL(value: number) {
@@ -595,7 +595,7 @@ onMounted(async () => {
                   <div :style="{ fontSize: '11px', color: ifoodConnectBlocked ? UI.amber2 : UI.textSub }">
                     {{ ifoodConnectBlocked
                       ? 'Integração em homologação pelo iFood — disponível em breve.'
-                      : 'Autorize o MenuBank no portal do iFood.' }}
+                      : 'Autorize o JetMenu no portal do iFood.' }}
                   </div>
                 </div>
                 <UIPill
@@ -1278,7 +1278,7 @@ onMounted(async () => {
             Plano e pagamento
           </div>
           <div :style="{ fontSize: '12.5px', color: UI.textSub, marginBottom: '18px' }">
-            Sua assinatura do MenuBank.
+            Sua assinatura do JetMenu.
           </div>
 
           <div

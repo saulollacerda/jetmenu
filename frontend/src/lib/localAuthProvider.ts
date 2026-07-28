@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { AuthError, type AuthProvider, type AuthSession, type SignUpForm } from './authTypes'
 
-const TOKEN_KEY = 'menubank.auth.token'
+const TOKEN_KEY = 'jetmenu.auth.token'
 
 const baseURL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || '/api'
 // Bare client (no interceptors) so it never recurses through the app's `api` instance.
