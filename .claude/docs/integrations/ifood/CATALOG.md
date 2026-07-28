@@ -1,8 +1,8 @@
 # iFood — Catalog API v2.0
 
-> **Scope for MenuBank: read and write.** `IfoodCatalogClient`/`IfoodCatalogImportService`
+> **Scope for JetMenu: read and write.** `IfoodCatalogClient`/`IfoodCatalogImportService`
 > fetch the catalog and import it into our system; `IfoodCatalogWriteClient`/
-> `IfoodCatalogPublishService` push MenuBank products back to iFood.
+> `IfoodCatalogPublishService` push JetMenu products back to iFood.
 >
 > **Read (v1):** items → `Product`, categories → `Category` only. Option groups /
 > complements are NOT imported (candidates for ingredient suggestions in a future version).
@@ -62,7 +62,7 @@ One catalog serves multiple sales channels; each channel is a context:
 
 The same item can have different price, status, and POS code per context (`contextModifiers`).
 
-**MenuBank:** orders we import come from delivery, so read the **`DEFAULT`** context. Contexts not listed in `contextModifiers` inherit the root values — root values are effectively the DEFAULT ones unless a `DEFAULT` modifier exists.
+**JetMenu:** orders we import come from delivery, so read the **`DEFAULT`** context. Contexts not listed in `contextModifiers` inherit the root values — root values are effectively the DEFAULT ones unless a `DEFAULT` modifier exists.
 
 ## Categories
 
@@ -98,7 +98,7 @@ Item = the product sold to the end customer (X-Burger, Refrigerante, Pizza Calab
 
 - Arbitrary string controlled by the POS (e.g. `BURGER_001`, `xburger-default`), unique within the merchant.
 - Interoperable with `id` for sync purposes — iFood treats it as an alternate identifier.
-- **MenuBank:** this is what order items carry as `externalCode` and what
+- **JetMenu:** this is what order items carry as `externalCode` and what
   `IfoodOrderImportService.resolveProduct` matches against `Product.externalId`
   (with canonical-name fallback). Catalog import should persist it on the imported
   product so order resolution stops missing.
@@ -112,7 +112,7 @@ Item = the product sold to the end customer (X-Burger, Refrigerante, Pizza Calab
 
 - `value` — charged price.
 - `originalValue` — optional, pre-discount price (display only).
-- **MenuBank:** price only — the catalog carries **no cost / recipe (ficha técnica) data**. Imported products start with zero cost; the merchant fills the ficha técnica afterwards.
+- **JetMenu:** price only — the catalog carries **no cost / recipe (ficha técnica) data**. Imported products start with zero cost; the merchant fills the ficha técnica afterwards.
 
 ## Complements (optionGroups / options)
 
@@ -150,7 +150,7 @@ Choices the customer makes when buying an item (drink, size, sauce). Groups (`op
 
 `min`/`max` on the group control how many options the customer picks: `min: 1, max: 1` = required single choice; `min: 0` = optional.
 
-**MenuBank:** order options with no ingredient match today raise `MISSING_INGREDIENT` and are skipped. Catalog options (especially `INGREDIENTS` groups) are candidates to pre-create/suggest ingredients during import.
+**JetMenu:** order options with no ingredient match today raise `MISSING_INGREDIENT` and are skipped. Catalog options (especially `INGREDIENTS` groups) are candidates to pre-create/suggest ingredients during import.
 
 ## contextModifiers
 
@@ -169,11 +169,11 @@ Accepted fields: `catalogContext` (required), `price`, `status`, `externalCode`.
 
 ## Inventory
 
-Limits sellable quantity of a product; at zero stock the item becomes `UNAVAILABLE` automatically. **MenuBank:** not relevant for read-only import — availability doesn't affect our product registry, only what iFood displays.
+Limits sellable quantity of a product; at zero stock the item becomes `UNAVAILABLE` automatically. **JetMenu:** not relevant for read-only import — availability doesn't affect our product registry, only what iFood displays.
 
-## Import mapping summary (iFood → MenuBank)
+## Import mapping summary (iFood → JetMenu)
 
-| iFood | MenuBank |
+| iFood | JetMenu |
 |-------|----------|
 | Item (`DEFAULT` context values) | `Product` |
 | `externalCode` | `Product.externalId` (dedupe/link key, fallback: canonical name) |
@@ -190,7 +190,7 @@ the official request/response examples ("Padrões comuns").
 
 ### Scope decisions
 
-- **WHITELABEL only.** MenuBank writes are scoped to the `WHITELABEL` context (Cardápio
+- **WHITELABEL only.** JetMenu writes are scoped to the `WHITELABEL` context (Cardápio
   Digital), never `DEFAULT` (delivery). Since unlisted contexts inherit the item's root
   values, a naive write (root `price`/`status` with no `contextModifiers`) would also expose
   the item on delivery. So the item root `status` always goes out as `UNAVAILABLE`, and the
@@ -201,7 +201,7 @@ the official request/response examples ("Padrões comuns").
   an API limitation.
 - **Complements, pizza, combo, availability scheduling, `POST /inventory`** — deferred.
   iFood's own homologation criteria mark these "(se aplicável)"; build only when a real
-  merchant menu needs them. MenuBank has no option-group/complement domain model today.
+  merchant menu needs them. JetMenu has no option-group/complement domain model today.
   `PUT /items` is sent with empty `optionGroups`/`options`.
 
 ### Write endpoints (implemented)
@@ -250,7 +250,7 @@ off delivery. Republish via `POST /publish` to restore the WHITELABEL-only shape
   `INACTIVE`. The root status is always `UNAVAILABLE`.
 - `externalCode` uses `Product.externalId` when set, otherwise the derived `"MB-" + product.id`.
   An existing `externalId` is never overwritten.
-- `products[].description` is omitted — MenuBank has no product description yet.
+- `products[].description` is omitted — JetMenu has no product description yet.
 
 ### Publish service
 
@@ -262,7 +262,7 @@ would make a republish duplicate items).
 | Method | Behaviour |
 |---|---|
 | `publish(merchantId, productIds)` | Empty/null list = all `ACTIVE` products. Per product: ensure the `Category` exists on iFood (`Category.externalId` null → `POST /categories`, id persisted), then `PUT /items`. |
-| `syncPrices(merchantId, productIds)` | Current MenuBank prices via a single `PATCH /items/price`; returns the `batchId`. Only products already published. |
+| `syncPrices(merchantId, productIds)` | Current JetMenu prices via a single `PATCH /items/price`; returns the `batchId`. Only products already published. |
 | `syncStatus(merchantId, changes)` | Single `PATCH /items/status`; returns the `batchId`. |
 | `getBatch(merchantId, batchId)` | Passthrough of the batch result. |
 

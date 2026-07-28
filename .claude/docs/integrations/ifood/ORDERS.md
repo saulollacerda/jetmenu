@@ -1,6 +1,6 @@
 # iFood — Orders
 
-MenuBank consome pedidos do iFood via **polling de eventos** (não webhook). São processados quatro
+JetMenu consome pedidos do iFood via **polling de eventos** (não webhook). São processados quatro
 eventos do ciclo de vida: `CONFIRMED` (importa o pedido cedo), `CANCELLED` (cancela e tira dos ganhos),
 `CONCLUDED` (solidifica) e `CANCELLATION_REQUESTED` (cliente pediu cancelamento — só notifica). Os
 demais (`PLACED`, `DISPATCHED`, `READY_TO_PICKUP`, etc.) são apenas reconhecidos (acknowledged) para
@@ -86,7 +86,7 @@ padrão de retry em 401 do `IfoodOrderSyncService` (401 → `handleUnauthorized(
 
 ### Motivos de cancelamento
 
-A homologação exige que o lojista escolha entre os motivos **do iFood** — MenuBank nunca inventa um
+A homologação exige que o lojista escolha entre os motivos **do iFood** — JetMenu nunca inventa um
 motivo. `GET /orders/{id}/cancellationReasons` devolve pares `{cancelCodeId, description}`; a UI
 mostra a `description` e devolve o `cancelCodeId` no `POST /cancel`. Os dois campos viajam juntos até
 a UI e de volta, sem tradução.
@@ -210,7 +210,7 @@ o pedido depois.
 | `orderType` | enum | `DELIVERY`, `TAKEOUT`, `DINE_IN` |
 | `orderTiming` | enum | `IMMEDIATE` ou `SCHEDULED` |
 | `salesChannel` | string | `IFOOD`, `DIGITAL_CATALOG`, `POS`, `TOTEM`, `IFOOD_SHOP`, `GROCERY_WHITELABEL` |
-| `category` | string | `FOOD`, `GROCERY`, `ANOTAI`, `FOOD_SELF_SERVICE` — **MenuBank só processa `category == "FOOD"`**; demais categorias são ignoradas na importação |
+| `category` | string | `FOOD`, `GROCERY`, `ANOTAI`, `FOOD_SELF_SERVICE` — **JetMenu só processa `category == "FOOD"`**; demais categorias são ignoradas na importação |
 | `createdAt` | date | Data/hora de criação (UTC) |
 | `preparationStartDateTime` | date | Horário recomendado para início do preparo |
 | `isTest` | boolean | Pedido de teste — **importado com `status = TEST`** (independente do evento de origem). `TEST` é terminal: `CONCLUDED`/`CANCELLED` não o alteram, então o pedido nunca entra nos ganhos (dashboard/exportação só agregam `PAID`) nem gera notificação de cancelamento |
@@ -305,7 +305,7 @@ embutido no `total.orderAmount` e é gravado apenas para exibição.
 | `takeout.mode` | `Order.takeoutMode` |
 | `takeout.takeoutDateTime` | `Order.takeoutDateTime` (UTC → `America/Sao_Paulo`) |
 
-`delivery.deliveryAddress` **não é persistido** — MenuBank não guarda endereço.
+`delivery.deliveryAddress` **não é persistido** — JetMenu não guarda endereço.
 
 ### Campos fora do escopo
 
@@ -314,7 +314,7 @@ resposta da API, mas não persistidos. Revisitar se algum dashboard precisar des
 
 ## Mapeamento → `Order`/`OrderItem`/`OrderItemExtraIngredient`
 
-| Campo iFood | Destino MenuBank |
+| Campo iFood | Destino JetMenu |
 |---|---|
 | `id` | `Order.externalOrderId` |
 | `displayId` | `Order.displayId` |

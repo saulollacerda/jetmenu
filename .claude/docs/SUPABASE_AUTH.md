@@ -1,6 +1,6 @@
 # Supabase Auth Integration
 
-MenuBank delegates **authentication** (login, signup, password, email confirmation,
+JetMenu delegates **authentication** (login, signup, password, email confirmation,
 token issuance/refresh) to **Supabase**. The Spring Boot backend is a pure **resource
 server**: it only validates Supabase-issued JWTs and maps the Supabase user to a local
 `Merchant`. The Vue frontend talks to Supabase directly via `@supabase/supabase-js`.

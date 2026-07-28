@@ -1,4 +1,4 @@
-# Frontend — MenuBank
+# Frontend — JetMenu
 
 Vue 3 SPA, Composition API, TypeScript.
 
