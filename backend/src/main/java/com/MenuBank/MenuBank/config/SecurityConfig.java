@@ -40,9 +40,10 @@ public class SecurityConfig {
                             // obtain a token without a bearer token.
                             .requestMatchers("/api/auth/dev-login", "/api/auth/dev-register").permitAll()
                             .requestMatchers("/api/plans").permitAll()
-                            // AbacatePay calls this endpoint server-to-server; authentication
-                            // is done via the webhookSecret query parameter.
-                            .requestMatchers("/api/webhooks/abacatepay").permitAll()
+                            // NOTE: the payment provider's webhook path used to be permitted
+                            // here. It was removed together with the provider — the next
+                            // billing integration must add its own permitAll entry, or its
+                            // server-to-server callbacks will be rejected with 401.
                             .anyRequest().authenticated()
                     )
                     // Without an explicit entry point Spring Security answers an

@@ -14,14 +14,14 @@ import java.util.UUID;
 public class SubscriptionController {
 
     private final SubscriptionService subscriptionService;
-    private final AbacatePayBillingService abacatePayBillingService;
+    private final BillingProvider billingProvider;
     private final AuthHelper authHelper;
 
     public SubscriptionController(SubscriptionService subscriptionService,
-                                  AbacatePayBillingService abacatePayBillingService,
+                                  BillingProvider billingProvider,
                                   AuthHelper authHelper) {
         this.subscriptionService = subscriptionService;
-        this.abacatePayBillingService = abacatePayBillingService;
+        this.billingProvider = billingProvider;
         this.authHelper = authHelper;
     }
 
@@ -31,12 +31,17 @@ public class SubscriptionController {
         return ResponseEntity.ok(subscriptionService.getMySubscription(merchantId));
     }
 
+    /**
+     * Delegates to whichever {@link BillingProvider} is wired in. With no provider
+     * integrated the default bean answers 503 with a pt-BR message instead of failing
+     * silently.
+     */
     @PostMapping("/checkout")
     public ResponseEntity<CheckoutResponse> createCheckout(
             Authentication auth,
             @Valid @RequestBody CheckoutRequest request) {
         UUID merchantId = authHelper.getMerchantId(auth);
-        return ResponseEntity.ok(abacatePayBillingService.createCheckout(merchantId, request.getPlanId()));
+        return ResponseEntity.ok(billingProvider.createCheckout(merchantId, request.getPlanId()));
     }
 
     @PostMapping("/revenue-report")

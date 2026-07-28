@@ -89,10 +89,9 @@ describe('PlansView — carregamento dos planos', () => {
 })
 
 describe('PlansView — assinar', () => {
-  it('usuário autenticado: chama createCheckout e redireciona o navegador', async () => {
+  it('usuário autenticado: avisa que o pagamento está indisponível, sem chamar createCheckout', async () => {
     authState.authenticated = true
     mockedBilling.listPlans.mockResolvedValue([PLAN])
-    mockedBilling.createCheckout.mockResolvedValue({ url: 'https://checkout.example/abc' })
 
     const wrapper = mount(PlansView, GLOBAL)
     await flushPromises()
@@ -100,8 +99,12 @@ describe('PlansView — assinar', () => {
     await wrapper.find('[data-testid="plan-cta"]').trigger('click')
     await flushPromises()
 
-    expect(mockedBilling.createCheckout).toHaveBeenCalledWith('plan-1')
-    expect(window.location.href).toBe('https://checkout.example/abc')
+    expect(mockedBilling.createCheckout).not.toHaveBeenCalled()
+    expect(window.location.href).toBe('')
+    const notice = wrapper.find('[data-testid="plan-unavailable-notice"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('indisponível')
+    expect(notice.text()).toContain('contato')
   })
 
   it('usuário não autenticado: redireciona para /register sem criar checkout', async () => {
@@ -116,19 +119,5 @@ describe('PlansView — assinar', () => {
 
     expect(mockedBilling.createCheckout).not.toHaveBeenCalled()
     expect(pushMock).toHaveBeenCalledWith('/register')
-  })
-
-  it('mostra erro em pt-BR quando o checkout falha', async () => {
-    authState.authenticated = true
-    mockedBilling.listPlans.mockResolvedValue([PLAN])
-    mockedBilling.createCheckout.mockRejectedValue(new Error('boom'))
-
-    const wrapper = mount(PlansView, GLOBAL)
-    await flushPromises()
-
-    await wrapper.find('[data-testid="plan-cta"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('Não foi possível iniciar o pagamento')
   })
 })

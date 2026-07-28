@@ -58,14 +58,16 @@ describe('billingService', () => {
     expect(result).toEqual(subscription)
   })
 
+  // Kept intact although no view calls it today: the next payment provider only has to
+  // restore the call site, not this service.
   it('createCheckout should POST /subscription/checkout with planId and return the payment URL', async () => {
     vi.mocked(api.post).mockResolvedValue({
-      data: { url: 'https://pay.abacatepay.com/bill_xyz' },
+      data: { url: 'https://checkout.example/pay_123' },
     })
 
     const result = await billingService.createCheckout('plan-1')
 
     expect(api.post).toHaveBeenCalledWith('/subscription/checkout', { planId: 'plan-1' })
-    expect(result.url).toBe('https://pay.abacatepay.com/bill_xyz')
+    expect(result.url).toBe('https://checkout.example/pay_123')
   })
 })
