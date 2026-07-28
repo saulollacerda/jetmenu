@@ -12,24 +12,33 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("IfoodOrderSyncService")
@@ -39,11 +48,15 @@ class IfoodOrderSyncServiceTest {
     @Mock private IfoodTokenService tokenService;
     @Mock private MerchantRepository merchantRepository;
     @Mock private IfoodOrderImportService importService;
+    @Mock private IfoodProcessedEventRepository processedEventRepository;
 
     @InjectMocks
     private IfoodOrderSyncService syncService;
 
     private Merchant merchant;
+
+    /** Backoff pauses recorded instead of slept, so the suite stays fast. */
+    private final List<Long> backoffPauses = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -55,6 +68,8 @@ class IfoodOrderSyncServiceTest {
         lenient().when(merchantRepository.findAllByIfoodMerchantIdIsNotNullAndIfoodOrderSyncEnabledTrue())
                 .thenReturn(List.of(merchant));
         lenient().when(tokenService.getAccessToken()).thenReturn("token-1");
+        backoffPauses.clear();
+        syncService.setBackoff(backoffPauses::add);
     }
 
     private IfoodEventResponse event(String id, String fullCode, String orderId) {
@@ -89,6 +104,17 @@ class IfoodOrderSyncServiceTest {
     private static HttpClientErrorException notFound() {
         return HttpClientErrorException.create(
                 HttpStatus.NOT_FOUND, "Not Found", new HttpHeaders(), new byte[0], StandardCharsets.UTF_8);
+    }
+
+    private static HttpClientErrorException badRequest() {
+        return HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", new HttpHeaders(), new byte[0], StandardCharsets.UTF_8);
+    }
+
+    private static HttpServerErrorException serverError() {
+        return HttpServerErrorException.create(
+                HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error",
+                new HttpHeaders(), new byte[0], StandardCharsets.UTF_8);
     }
 
     @Test
@@ -322,5 +348,190 @@ class IfoodOrderSyncServiceTest {
         syncService.syncOrders();
 
         then(orderClient).should(never()).acknowledgeEvents(anyString(), anyList());
+    }
+
+    @Nested
+    @DisplayName("deduplicação de eventos")
+    class EventDeduplication {
+
+        @Test
+        @DisplayName("evento já processado é descartado, mas continua sendo reconhecido")
+        void shouldDiscardAlreadyProcessedEventButStillAcknowledgeIt() {
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willReturn(List.of(event("evt-1", "CONFIRMED", "ord-1")));
+            given(processedEventRepository.findExistingIds(List.of("evt-1")))
+                    .willReturn(List.of("evt-1"));
+
+            syncService.syncOrders();
+
+            then(orderClient).should(never()).getOrderDetail(anyString(), anyString());
+            then(importService).should(never()).importOrder(any(), any(), any());
+            then(processedEventRepository).should(never()).saveAll(any());
+            then(orderClient).should().acknowledgeEvents("token-1", List.of("evt-1"));
+        }
+
+        @Test
+        @DisplayName("evento novo é processado e registrado com a data de processamento")
+        void shouldProcessAndRegisterNewEvent() {
+            IfoodOrderDetailResponse detail = detail("ord-1");
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willReturn(List.of(event("evt-1", "CONFIRMED", "ord-1")));
+            given(processedEventRepository.findExistingIds(List.of("evt-1"))).willReturn(List.of());
+            given(orderClient.getOrderDetail("token-1", "ord-1")).willReturn(raw(detail));
+
+            syncService.syncOrders();
+
+            then(importService).should().importOrder(detail, OrderStatus.PENDING, rawOf(detail));
+
+            ArgumentCaptor<List<IfoodProcessedEvent>> captor = ArgumentCaptor.forClass(List.class);
+            then(processedEventRepository).should().saveAll(captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+            assertThat(captor.getValue().get(0).getEventId()).isEqualTo("evt-1");
+            assertThat(captor.getValue().get(0).getProcessedAt()).isNotNull();
+        }
+
+        @Test
+        @DisplayName("em um lote misto apenas os eventos inéditos são processados e registrados")
+        void shouldProcessOnlyUnseenEventsInMixedBatch() {
+            IfoodOrderDetailResponse detail = detail("ord-2");
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willReturn(List.of(
+                            event("evt-1", "CONFIRMED", "ord-1"),
+                            event("evt-2", "CONFIRMED", "ord-2")));
+            given(processedEventRepository.findExistingIds(List.of("evt-1", "evt-2")))
+                    .willReturn(List.of("evt-1"));
+            given(orderClient.getOrderDetail("token-1", "ord-2")).willReturn(raw(detail));
+
+            syncService.syncOrders();
+
+            then(orderClient).should(never()).getOrderDetail("token-1", "ord-1");
+            then(importService).should().importOrder(detail, OrderStatus.PENDING, rawOf(detail));
+
+            ArgumentCaptor<List<IfoodProcessedEvent>> captor = ArgumentCaptor.forClass(List.class);
+            then(processedEventRepository).should().saveAll(captor.capture());
+            assertThat(captor.getValue()).extracting(IfoodProcessedEvent::getEventId)
+                    .containsExactly("evt-2");
+            then(orderClient).should().acknowledgeEvents("token-1", List.of("evt-1", "evt-2"));
+        }
+
+        @Test
+        @DisplayName("id repetido dentro do mesmo lote de polling é processado uma única vez")
+        void shouldProcessRepeatedIdWithinTheSameBatchOnlyOnce() {
+            IfoodOrderDetailResponse detail = detail("ord-1");
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willReturn(List.of(
+                            event("evt-1", "CONFIRMED", "ord-1"),
+                            event("evt-1", "CONFIRMED", "ord-1")));
+            given(processedEventRepository.findExistingIds(List.of("evt-1", "evt-1")))
+                    .willReturn(List.of());
+            given(orderClient.getOrderDetail("token-1", "ord-1")).willReturn(raw(detail));
+
+            syncService.syncOrders();
+
+            then(orderClient).should().getOrderDetail("token-1", "ord-1");
+            then(importService).should().importOrder(detail, OrderStatus.PENDING, rawOf(detail));
+
+            ArgumentCaptor<List<IfoodProcessedEvent>> captor = ArgumentCaptor.forClass(List.class);
+            then(processedEventRepository).should().saveAll(captor.capture());
+            assertThat(captor.getValue()).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("expurga os ids processados há mais de 7 dias a cada execução")
+        void shouldPurgeEventIdsOlderThanSevenDays() {
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1"))).willReturn(List.of());
+            LocalDateTime before = LocalDateTime.now().minusDays(7);
+
+            syncService.syncOrders();
+
+            ArgumentCaptor<LocalDateTime> captor = ArgumentCaptor.forClass(LocalDateTime.class);
+            then(processedEventRepository).should().deleteProcessedBefore(captor.capture());
+            assertThat(captor.getValue())
+                    .isAfterOrEqualTo(before)
+                    .isBeforeOrEqualTo(LocalDateTime.now().minusDays(7).plusSeconds(1));
+        }
+    }
+
+    @Nested
+    @DisplayName("retry com backoff em falhas transitórias")
+    class TransientFailureRetry {
+
+        @Test
+        @DisplayName("5xx no polling é repetido com backoff exponencial até obter sucesso")
+        void shouldRetryPollingOnServerError() {
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willThrow(serverError())
+                    .willReturn(List.of());
+
+            syncService.syncOrders();
+
+            then(orderClient).should(times(2)).pollEvents("token-1", List.of("ifood-m1"));
+            assertThat(backoffPauses).containsExactly(500L);
+        }
+
+        @Test
+        @DisplayName("desiste após 3 tentativas e propaga o erro, com backoff de 500ms e 1s")
+        void shouldGiveUpAfterThreeAttempts() {
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1"))).willThrow(serverError());
+
+            assertThatThrownBy(() -> syncService.syncOrders())
+                    .isInstanceOf(HttpServerErrorException.class);
+
+            then(orderClient).should(times(3)).pollEvents("token-1", List.of("ifood-m1"));
+            assertThat(backoffPauses).containsExactly(500L, 1000L);
+        }
+
+        @Test
+        @DisplayName("timeout de rede no polling é repetido")
+        void shouldRetryPollingOnTimeout() {
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willThrow(new ResourceAccessException("Read timed out"))
+                    .willReturn(List.of());
+
+            syncService.syncOrders();
+
+            then(orderClient).should(times(2)).pollEvents("token-1", List.of("ifood-m1"));
+        }
+
+        @Test
+        @DisplayName("4xx nunca é repetido")
+        void shouldNotRetryOnClientError() {
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1"))).willThrow(badRequest());
+
+            assertThatThrownBy(() -> syncService.syncOrders())
+                    .isInstanceOf(HttpClientErrorException.class);
+
+            then(orderClient).should().pollEvents("token-1", List.of("ifood-m1"));
+            assertThat(backoffPauses).isEmpty();
+        }
+
+        @Test
+        @DisplayName("5xx no detalhe do pedido é repetido antes de importar")
+        void shouldRetryOrderDetailOnServerError() {
+            IfoodOrderDetailResponse detail = detail("ord-1");
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willReturn(List.of(event("evt-1", "CONFIRMED", "ord-1")));
+            given(orderClient.getOrderDetail("token-1", "ord-1"))
+                    .willThrow(serverError())
+                    .willReturn(raw(detail));
+
+            syncService.syncOrders();
+
+            then(orderClient).should(times(2)).getOrderDetail("token-1", "ord-1");
+            then(importService).should().importOrder(detail, OrderStatus.PENDING, rawOf(detail));
+        }
+
+        @Test
+        @DisplayName("5xx no acknowledgment é repetido")
+        void shouldRetryAcknowledgmentOnServerError() {
+            given(orderClient.pollEvents("token-1", List.of("ifood-m1")))
+                    .willReturn(List.of(event("evt-1", "PLACED", "ord-1")));
+            willThrow(serverError()).willDoNothing()
+                    .given(orderClient).acknowledgeEvents("token-1", List.of("evt-1"));
+
+            syncService.syncOrders();
+
+            then(orderClient).should(times(2)).acknowledgeEvents("token-1", List.of("evt-1"));
+        }
     }
 }

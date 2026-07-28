@@ -9,11 +9,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
@@ -104,6 +106,52 @@ class IfoodOrderClientTest {
               .andRespond(withStatus(HttpStatus.ACCEPTED));
 
         client.acknowledgeEvents("access.jwt", List.of("evt_1", "evt_2"));
+
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("acknowledgeEvents quebra a lista em lotes de no máximo 2000 ids")
+    void acknowledgeEvents_shouldSplitIdsIntoBatchesOfAtMostTwoThousand() {
+        List<String> eventIds = IntStream.range(0, 2500).mapToObj(i -> "evt_" + i).toList();
+
+        server.expect(requestTo(BASE_URL + "/events/acknowledgment"))
+              .andExpect(method(HttpMethod.POST))
+              .andExpect(jsonPath("$.length()").value(2000))
+              .andExpect(jsonPath("$[0].id").value("evt_0"))
+              .andExpect(jsonPath("$[1999].id").value("evt_1999"))
+              .andRespond(withStatus(HttpStatus.ACCEPTED));
+        server.expect(requestTo(BASE_URL + "/events/acknowledgment"))
+              .andExpect(method(HttpMethod.POST))
+              .andExpect(jsonPath("$.length()").value(500))
+              .andExpect(jsonPath("$[0].id").value("evt_2000"))
+              .andExpect(jsonPath("$[499].id").value("evt_2499"))
+              .andRespond(withStatus(HttpStatus.ACCEPTED));
+
+        client.acknowledgeEvents("access.jwt", eventIds);
+
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("acknowledgeEvents envia uma única chamada quando a lista cabe em um lote")
+    void acknowledgeEvents_shouldSendSingleRequestWhenListFitsInOneBatch() {
+        List<String> eventIds = IntStream.range(0, 2000).mapToObj(i -> "evt_" + i).toList();
+
+        server.expect(ExpectedCount.once(), requestTo(BASE_URL + "/events/acknowledgment"))
+              .andExpect(method(HttpMethod.POST))
+              .andExpect(jsonPath("$.length()").value(2000))
+              .andRespond(withStatus(HttpStatus.ACCEPTED));
+
+        client.acknowledgeEvents("access.jwt", eventIds);
+
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("acknowledgeEvents não chama a API quando não há ids")
+    void acknowledgeEvents_shouldNotCallApiWhenThereAreNoIds() {
+        client.acknowledgeEvents("access.jwt", List.of());
 
         server.verify();
     }

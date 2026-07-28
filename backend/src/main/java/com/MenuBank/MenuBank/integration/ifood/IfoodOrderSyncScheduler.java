@@ -17,9 +17,9 @@ public class IfoodOrderSyncScheduler {
         this.syncService = syncService;
     }
 
-    // Every 5 minutes — well within iFood's rate limit of one polling request
-    // per 30 seconds; new orders just take up to 5 min to appear.
-    @Scheduled(fixedDelay = 300_000)
+    // Every 30 seconds — the cadence iFood requires for /events:polling during Order
+    // homologation, and also its rate limit: polling faster than this gets throttled.
+    @Scheduled(fixedDelay = 30_000)
     @Async
     public void syncOrders() {
         try {
