@@ -408,18 +408,16 @@ describe('SettingsView — Plano e pagamento', () => {
     expect(status.text()).toContain('Básico')
   })
 
-  it('clicar em assinar cria o checkout e abre a URL de pagamento', async () => {
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
-    mockedBilling.createCheckout.mockResolvedValue({
-      url: 'https://pay.abacatepay.com/bill_xyz',
-    })
+  it('avisa em pt-BR que o pagamento está indisponível e não oferece botão de assinar', async () => {
     const wrapper = await openBilling(subscriptionOf(), [basicPlan])
 
-    await wrapper.find('[data-testid="billing-subscribe-action"]').trigger('click')
-    await flushPromises()
-
-    expect(mockedBilling.createCheckout).toHaveBeenCalledWith('plan-1')
-    expect(openSpy).toHaveBeenCalledWith('https://pay.abacatepay.com/bill_xyz', '_self')
+    const notice = wrapper.find('[data-testid="billing-unavailable-notice"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('indisponível')
+    expect(notice.text()).toContain('contato')
+    // No dead button: nothing may look clickable while there is no provider.
+    expect(wrapper.find('[data-testid="billing-subscribe-action"]').exists()).toBe(false)
+    expect(mockedBilling.createCheckout).not.toHaveBeenCalled()
   })
 
   it('mostra os planos mesmo quando o merchant ainda não tem assinatura registrada', async () => {
@@ -435,16 +433,6 @@ describe('SettingsView — Plano e pagamento', () => {
     const planCard = wrapper.find('[data-testid="billing-plan-card"]')
     expect(planCard.exists()).toBe(true)
     expect(planCard.text()).toContain('Básico')
-    expect(wrapper.find('[data-testid="billing-subscribe-action"]').exists()).toBe(true)
-  })
-
-  it('exibe erro quando a criação do checkout falha', async () => {
-    mockedBilling.createCheckout.mockRejectedValue(new Error('fail'))
-    const wrapper = await openBilling(subscriptionOf(), [basicPlan])
-
-    await wrapper.find('[data-testid="billing-subscribe-action"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('[data-testid="billing-error"]').text()).toContain('pagamento')
+    expect(wrapper.find('[data-testid="billing-unavailable-notice"]').exists()).toBe(true)
   })
 })

@@ -3,7 +3,6 @@ package com.MenuBank.MenuBank.common;
 import com.MenuBank.MenuBank.category.CategoryNotFoundException;
 import com.MenuBank.MenuBank.category.DuplicateCategoryException;
 import com.MenuBank.MenuBank.customer.CustomerNotFoundException;
-import com.MenuBank.MenuBank.integration.abacatepay.AbacatePayException;
 import com.MenuBank.MenuBank.integration.anotaai.AnotaAIIntegrationException;
 import com.MenuBank.MenuBank.ingredient.DuplicateIngredientException;
 import com.MenuBank.MenuBank.ingredient.IngredientNotFoundException;
@@ -15,6 +14,7 @@ import com.MenuBank.MenuBank.fee.DuplicateFeeException;
 import com.MenuBank.MenuBank.fee.FeeNotFoundException;
 import com.MenuBank.MenuBank.product.IncludeNotFoundException;
 import com.MenuBank.MenuBank.auth.InvalidCredentialsException;
+import com.MenuBank.MenuBank.billing.BillingProviderUnavailableException;
 import com.MenuBank.MenuBank.billing.DuplicateRevenueReportException;
 import com.MenuBank.MenuBank.billing.PlanNotFoundException;
 import com.MenuBank.MenuBank.billing.SubscriptionNotFoundException;
@@ -170,14 +170,15 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
     }
 
-    // Detail is intentionally generic: the exception message carries internal
-    // endpoint/status info that belongs in logs, not in the pt-BR UI response.
-    @ExceptionHandler(AbacatePayException.class)
-    public ResponseEntity<ProblemDetail> handleAbacatePayFailure(AbacatePayException ex) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY,
-                "Não foi possível comunicar com o serviço de pagamento. Tente novamente em instantes.");
-        problem.setTitle("Erro na integração com AbacatePay");
-        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(problem);
+    // 503 rather than 5xx-generic: the checkout endpoint is intact, there is simply no
+    // payment provider wired in yet. The message is already pt-BR and merchant-facing.
+    @ExceptionHandler(BillingProviderUnavailableException.class)
+    public ResponseEntity<ProblemDetail> handleBillingProviderUnavailable(
+            BillingProviderUnavailableException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+        problem.setTitle("Pagamento indisponível");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(problem);
     }
 
     @ExceptionHandler(AnotaAIIntegrationException.class)

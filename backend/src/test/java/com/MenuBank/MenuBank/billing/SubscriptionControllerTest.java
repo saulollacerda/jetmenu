@@ -1,7 +1,6 @@
 package com.MenuBank.MenuBank.billing;
 
 import com.MenuBank.MenuBank.auth.AuthHelper;
-import com.MenuBank.MenuBank.integration.abacatepay.AbacatePayException;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -39,7 +38,7 @@ class SubscriptionControllerTest {
     private SubscriptionService subscriptionService;
 
     @MockitoBean
-    private AbacatePayBillingService abacatePayBillingService;
+    private BillingProvider billingProvider;
 
     @MockitoBean
     private AuthHelper authHelper;
@@ -99,12 +98,12 @@ class SubscriptionControllerTest {
     class CreateCheckout {
 
         @Test
-        @DisplayName("deve retornar 200 com a URL de pagamento da AbacatePay")
+        @DisplayName("deve retornar 200 com a URL devolvida pelo BillingProvider configurado")
         void shouldReturn200WithCheckoutUrl() throws Exception {
             UUID planId = UUID.randomUUID();
-            given(abacatePayBillingService.createCheckout(any(), eq(planId)))
+            given(billingProvider.createCheckout(any(), eq(planId)))
                     .willReturn(CheckoutResponse.builder()
-                            .url("https://pay.abacatepay.com/bill_xyz")
+                            .url("https://checkout.example/pay_123")
                             .build());
 
             mockMvc.perform(post("/api/subscription/checkout")
@@ -112,7 +111,7 @@ class SubscriptionControllerTest {
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("{\"planId\":\"" + planId + "\"}"))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.url").value("https://pay.abacatepay.com/bill_xyz"));
+                    .andExpect(jsonPath("$.url").value("https://checkout.example/pay_123"));
         }
 
         @Test
@@ -129,7 +128,7 @@ class SubscriptionControllerTest {
         @DisplayName("deve retornar 404 quando o plano não existe")
         void shouldReturn404WhenPlanNotFound() throws Exception {
             UUID planId = UUID.randomUUID();
-            given(abacatePayBillingService.createCheckout(any(), eq(planId)))
+            given(billingProvider.createCheckout(any(), eq(planId)))
                     .willThrow(new PlanNotFoundException(planId));
 
             mockMvc.perform(post("/api/subscription/checkout")
@@ -140,20 +139,21 @@ class SubscriptionControllerTest {
         }
 
         @Test
-        @DisplayName("deve retornar 502 quando a comunicação com a AbacatePay falha")
-        void shouldReturn502WhenAbacatePayFails() throws Exception {
+        @DisplayName("deve retornar 503 em pt-BR enquanto não há provedor de pagamento integrado")
+        void shouldReturn503WhenNoBillingProviderIsIntegrated() throws Exception {
             UUID planId = UUID.randomUUID();
-            given(abacatePayBillingService.createCheckout(any(), eq(planId)))
-                    .willThrow(new AbacatePayException("AbacatePay call to /checkouts/create failed: HTTP 500"));
+            given(billingProvider.createCheckout(any(), eq(planId)))
+                    .willThrow(new BillingProviderUnavailableException());
 
             mockMvc.perform(post("/api/subscription/checkout")
                             .with(csrf())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("{\"planId\":\"" + planId + "\"}"))
-                    .andExpect(status().isBadGateway())
-                    .andExpect(jsonPath("$.title").value("Erro na integração com AbacatePay"))
+                    .andExpect(status().isServiceUnavailable())
+                    .andExpect(jsonPath("$.title").value("Pagamento indisponível"))
                     .andExpect(jsonPath("$.detail").value(
-                            "Não foi possível comunicar com o serviço de pagamento. Tente novamente em instantes."));
+                            "O pagamento online está temporariamente indisponível enquanto integramos um novo "
+                                    + "provedor. Entre em contato com o suporte para ativar seu plano."));
         }
     }
 

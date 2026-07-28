@@ -35,6 +35,16 @@ public class Invoice {
     @Column(name = "stripe_invoice_id", length = 255, unique = true)
     private String stripeInvoiceId;
 
+    /**
+     * Legacy AbacatePay linkage, kept on purpose. The AbacatePay integration was removed,
+     * but historical rows still hold real billing ids and accounting reconciles invoices
+     * against them — never drop the column and never rename the field.
+     * <p>
+     * It doubles as the only external-payment-reference slot the schema has today, which is
+     * what {@link #getExternalPaymentReference()} exposes. The next payment provider must
+     * add its <b>own</b> column (plus migration) and repoint the two accessors below, so
+     * new payments never pollute the AbacatePay reconciliation data.
+     */
     @Column(name = "abacatepay_billing_id", length = 255, unique = true)
     private String abacatepayBillingId;
 
@@ -46,4 +56,17 @@ public class Invoice {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    /**
+     * Provider-agnostic view of the external payment reference used as the activation
+     * idempotency key. See {@link #abacatepayBillingId} for the storage caveat.
+     */
+    @Transient
+    public String getExternalPaymentReference() {
+        return abacatepayBillingId;
+    }
+
+    public void setExternalPaymentReference(String externalPaymentReference) {
+        this.abacatepayBillingId = externalPaymentReference;
+    }
 }

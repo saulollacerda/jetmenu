@@ -56,18 +56,17 @@
               </li>
             </ul>
 
-            <button
-              type="button"
-              class="lp-plan-cta"
-              data-testid="plan-cta"
-              :disabled="subscribingPlanId === plan.id"
-              @click="subscribe(plan)"
-            >
-              {{ subscribingPlanId === plan.id ? 'Gerando pagamento…' : 'Assinar agora' }}
+            <button type="button" class="lp-plan-cta" data-testid="plan-cta" @click="subscribe(plan)">
+              {{ auth.isAuthenticated ? 'Falar com o suporte' : 'Criar minha conta' }}
             </button>
 
-            <p v-if="checkoutError" class="lp-plan-error lp-plan-error-inline">
-              {{ checkoutError }}
+            <p
+              v-if="checkoutUnavailable"
+              class="lp-plan-notice"
+              data-testid="plan-unavailable-notice"
+            >
+              O pagamento online está temporariamente indisponível enquanto integramos um novo
+              provedor. Entre em contato com o suporte para ativar seu plano.
             </p>
 
             <p class="lp-plan-reassure">Sem fidelidade. Cancele quando quiser.</p>
@@ -97,8 +96,7 @@ const auth = useAuthStore()
 const plans = ref<PlanResponse[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
-const subscribingPlanId = ref<string | null>(null)
-const checkoutError = ref<string | null>(null)
+const checkoutUnavailable = ref(false)
 
 // Benefit-oriented copy used when the plan payload does not carry its own list.
 const DEFAULT_FEATURES = [
@@ -141,21 +139,16 @@ async function loadPlans() {
   }
 }
 
-async function subscribe(plan: PlanResponse) {
+// Sign-up still works; online checkout does not. The previous payment provider was
+// removed and the next one is not integrated yet, so an authenticated visitor gets an
+// explicit notice instead of a checkout that cannot be created. To restore it, call
+// billingService.createCheckout(plan.id) here and redirect to the returned URL.
+function subscribe(_plan: PlanResponse) {
   if (!auth.isAuthenticated) {
     router.push('/register')
     return
   }
-  subscribingPlanId.value = plan.id
-  checkoutError.value = null
-  try {
-    const response = await billingService.createCheckout(plan.id)
-    window.location.href = response.url
-  } catch {
-    checkoutError.value = 'Não foi possível iniciar o pagamento. Tente novamente.'
-  } finally {
-    subscribingPlanId.value = null
-  }
+  checkoutUnavailable.value = true
 }
 
 onMounted(loadPlans)
@@ -410,13 +403,15 @@ onMounted(loadPlans)
   opacity: 0.65;
   cursor: default;
 }
-.lp-plan-error {
-  color: #fca5a5;
+.lp-plan-notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fde68a;
   font-size: 12.5px;
-  font-weight: 600;
-}
-.lp-plan-error-inline {
-  margin-top: 10px;
+  line-height: 1.45;
   text-align: center;
 }
 .lp-plan-reassure {
