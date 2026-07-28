@@ -93,7 +93,7 @@ async function logout() {
           color: '#fff',
         }"
       >
-        menu<span :style="{ color: UI.emerald }">bank</span>
+        jet<span :style="{ color: UI.emerald }">menu</span>
       </div>
       <div
         :style="{

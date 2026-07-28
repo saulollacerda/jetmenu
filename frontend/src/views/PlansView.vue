@@ -4,7 +4,7 @@
     <header class="lp-nav">
       <div class="lp-nav-inner">
         <RouterLink to="/home" class="lp-wordmark-link">
-          <div class="lp-wordmark">menu<span>bank</span></div>
+          <div class="lp-wordmark">jet<span>menu</span></div>
         </RouterLink>
         <div class="lp-spacer"></div>
         <RouterLink to="/home" class="lp-nav-signin">Voltar ao início</RouterLink>

@@ -120,7 +120,7 @@ async function handleSubmit() {
       "
     >
       <div :style="{ fontSize: '28px', fontWeight: 700, letterSpacing: '-0.5px', marginBottom: '36px' }">
-        menu<span :style="{ color: UI.emerald }">bank</span>
+        jet<span :style="{ color: UI.emerald }">menu</span>
       </div>
       <div
         :style="{
@@ -210,7 +210,7 @@ async function handleSubmit() {
       >
         <div style="text-align: center; margin-bottom: 24px">
           <div :style="{ fontSize: '22px', fontWeight: 700, letterSpacing: '-0.4px', color: UI.text }">
-            menu<span :style="{ color: UI.blue }">bank</span>
+            jet<span :style="{ color: UI.blue }">menu</span>
           </div>
           <div :style="{ fontSize: '14px', color: UI.textSub, marginTop: '6px' }">
             Crie sua conta para começar

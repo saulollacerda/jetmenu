@@ -4,7 +4,7 @@
     <!-- NAV -->
     <header class="lp-nav">
       <div class="lp-nav-inner">
-        <div class="lp-wordmark">menu<span>bank</span></div>
+        <div class="lp-wordmark">jet<span>menu</span></div>
         <nav>
           <ul class="lp-nav-links">
             <li><a href="#features">Funcionalidades</a></li>
@@ -90,7 +90,7 @@
             <div class="lp-mini-dash">
               <aside class="lp-mini-sidebar">
                 <div class="lp-mini-logo">
-                  <div class="lp-wordmark" style="font-size:14px;">menu<span>bank</span></div>
+                  <div class="lp-wordmark" style="font-size:14px;">jet<span>menu</span></div>
                   <div style="font-size:7px;color:#64748b;margin-top:2px;letter-spacing:.2px;">gestão · custo · lucro</div>
                 </div>
                 <nav class="lp-mini-nav">
@@ -486,7 +486,7 @@
       <div class="lp-footer-inner">
         <div class="lp-footer-grid">
           <div>
-            <div class="lp-wordmark">menu<span>bank</span></div>
+            <div class="lp-wordmark">jet<span>menu</span></div>
             <p class="lp-footer-tagline">Sistema de gestão para lojas de delivery. Calcule margem real, custo por ingrediente e lucro estimado em cada pedido.</p>
           </div>
           <div v-for="col in footerCols" :key="col.t">

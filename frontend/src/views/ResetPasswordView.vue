@@ -69,7 +69,7 @@ async function handleSubmit() {
         style="text-align: center"
         :style="{ fontSize: '22px', fontWeight: 700, letterSpacing: '-0.4px', color: UI.text }"
       >
-        menu<span :style="{ color: UI.blue }">bank</span>
+        jet<span :style="{ color: UI.blue }">menu</span>
       </div>
 
       <template v-if="done">
