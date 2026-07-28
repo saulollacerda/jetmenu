@@ -1,5 +1,9 @@
 import api from './api'
-import type { OrderStatus } from '@/types/Order'
+import type {
+  IfoodCancellationReason,
+  IfoodOrderCancelRequest,
+  OrderStatus,
+} from '@/types/Order'
 
 const BASE = '/integrations/ifood/orders'
 
@@ -58,6 +62,45 @@ export const ifoodOrderActionService = {
   /** Avisa o iFood de que um pedido de entrega própria (DELIVERY) saiu para entrega. */
   async dispatch(orderId: string): Promise<IfoodOrderActionResult> {
     const { data } = await api.post<IfoodOrderActionResult>(`${BASE}/${orderId}/dispatch`)
+    return data
+  },
+
+  /**
+   * Motivos oficiais de cancelamento aceitos pelo iFood para este pedido. A homologação
+   * exige exibi-los ao lojista: ele escolhe um da lista em vez de digitar o motivo.
+   */
+  async cancellationReasons(orderId: string): Promise<IfoodCancellationReason[]> {
+    const { data } = await api.get<IfoodCancellationReason[]>(
+      `${BASE}/${orderId}/cancellation-reasons`,
+    )
+    return data
+  },
+
+  /**
+   * Cancelamento iniciado pelo lojista. `cancellationCode` é obrigatório (o backend
+   * devolve 400 se vier em branco); a observação livre só é enviada quando preenchida.
+   */
+  async cancel(orderId: string, request: IfoodOrderCancelRequest): Promise<IfoodOrderActionResult> {
+    const note = request.reason?.trim()
+    const body: IfoodOrderCancelRequest = { cancellationCode: request.cancellationCode }
+    if (note) body.reason = note
+    const { data } = await api.post<IfoodOrderActionResult>(`${BASE}/${orderId}/cancel`, body)
+    return data
+  },
+
+  /** Aceita um cancelamento pedido pelo cliente ou pela plataforma: o pedido é cancelado. */
+  async acceptCancellationRequest(orderId: string): Promise<IfoodOrderActionResult> {
+    const { data } = await api.post<IfoodOrderActionResult>(
+      `${BASE}/${orderId}/cancellation-request/accept`,
+    )
+    return data
+  },
+
+  /** Recusa um cancelamento pedido pelo cliente ou pela plataforma: o status não muda. */
+  async denyCancellationRequest(orderId: string): Promise<IfoodOrderActionResult> {
+    const { data } = await api.post<IfoodOrderActionResult>(
+      `${BASE}/${orderId}/cancellation-request/deny`,
+    )
     return data
   },
 

@@ -36,6 +36,25 @@ export interface OrderPaymentMethodResponse {
   changeAmount?: number | null
 }
 
+/**
+ * Motivo oficial de cancelamento do iFood, como devolvido por `GET /cancellationReasons`.
+ * A homologação exige que o lojista escolha um destes — nunca digite o próprio motivo.
+ */
+export interface IfoodCancellationReason {
+  /** Código enviado de volta ao iFood no cancelamento ("501"). */
+  cancelCodeId: string
+  /** Texto exibido ao lojista ("PROBLEMAS DE SISTEMA"). */
+  description: string
+}
+
+/** Corpo do cancelamento iniciado pelo lojista. */
+export interface IfoodOrderCancelRequest {
+  /** `cancelCodeId` do motivo escolhido. Obrigatório. */
+  cancellationCode: string
+  /** Observação livre opcional, apenas complementar ao motivo oficial. */
+  reason?: string | null
+}
+
 export interface OrderItemExtraIngredientRequest {
   ingredientId: string
   quantity: number
