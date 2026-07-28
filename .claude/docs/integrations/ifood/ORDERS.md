@@ -64,6 +64,16 @@ Guard rails (rejeitam antes de chamar o iFood): pedido inexistente para o mercha
 iFood: 404 → 404, 401 persistente → reautorização (409), demais `4xx` → 400 com o detalhe da API.
 O status local só muda **depois** de o iFood aceitar a ação.
 
+**Tipo do pedido.** A homologação amarra `readyToPickup` a `TAKEOUT` e `dispatch` a `DELIVERY`, e o
+backend recusa a combinação errada com 409 (`Order.orderType` conhecido e contraditório). `orderType`
+**nulo não bloqueia**: é o valor de todo pedido manual e de tudo importado antes da V27, e recusar
+esses quebraria a base existente. `confirm` não depende do tipo.
+
+**Retry em falha transitória.** Só o `confirm` repete (2 tentativas, 300 ms de intervalo) em `5xx` e
+erro de rede: é a única ação com prazo, e um blip no sétimo minuto do SLA custa o pedido ao lojista.
+`dispatch`/`readyToPickup` não repetem — sem prazo, o erro sobe na hora e o lojista tenta de novo.
+Nenhuma ação repete em `4xx`.
+
 ### SLA de confirmação (8 minutos)
 
 Regra: `deadline = Order.dateTime + 8 min` (`Order.dateTime` já é `createdAt` convertido para
@@ -81,7 +91,9 @@ quando a janela acaba. A UI pode chamar uma vez e contar regressivamente a parti
 | POST | `/api/integrations/ifood/orders/{orderId}/dispatch` | `200` `{orderId, externalOrderId, status}` |
 | GET | `/api/integrations/ifood/orders/{orderId}/confirmation-window` | `200` `{orderId, createdAt, deadline, remainingSeconds, expired}` |
 
-Nenhuma requisição tem corpo. Erros são `ProblemDetail` com `detail` em pt-BR.
+Nenhuma requisição tem corpo. Erros são `ProblemDetail` com `detail` em pt-BR — inclusive
+`409 "Só é possível marcar como pronto para retirada um pedido de retirada."` e
+`409 "Só é possível despachar um pedido de entrega."` para o tipo errado.
 
 ## Polling de eventos
 
