@@ -16,6 +16,9 @@ import com.MenuBank.MenuBank.order.OrderItem;
 import com.MenuBank.MenuBank.order.OrderItemExtraIngredient;
 import com.MenuBank.MenuBank.order.OrderItemUnmatchedSubItem;
 import com.MenuBank.MenuBank.order.OrderOrigin;
+import com.MenuBank.MenuBank.order.OrderPaymentMethod;
+import com.MenuBank.MenuBank.order.OrderTiming;
+import com.MenuBank.MenuBank.order.OrderType;
 import com.MenuBank.MenuBank.order.ResolvedSubItems;
 import com.MenuBank.MenuBank.order.OrderRepository;
 import com.MenuBank.MenuBank.order.OrderStatus;
@@ -60,6 +63,10 @@ public class IfoodOrderImportService {
 
     private static final ZoneId BRAZIL_ZONE = ZoneId.of("America/Sao_Paulo");
     private static final String FOOD_CATEGORY = "FOOD";
+
+    /** Sponsor names in {@code benefits[].sponsorshipValues[].name}. */
+    private static final String SPONSOR_IFOOD = "IFOOD";
+    private static final String SPONSOR_MERCHANT = "MERCHANT";
 
     private final MerchantRepository merchantRepository;
     private final OrderRepository orderRepository;
@@ -152,6 +159,7 @@ public class IfoodOrderImportService {
                 .build();
 
         items.forEach(item -> item.setOrder(order));
+        applyOrderDetails(order, detail);
 
         // Ficha do pedido: insumos cobrados UMA vez por pedido (sacola, guardanapo),
         // independentemente da quantidade de itens. Vazia = custo inalterado.
@@ -231,6 +239,103 @@ public class IfoodOrderImportService {
                         externalOrderId, merchant.getId()));
     }
 
+    /**
+     * Copia os dados descritivos exigidos pela homologação do módulo Order do iFood:
+     * identificação amigável, tipo/timing, CPF/CNPJ da nota, breakdown de pagamento
+     * (bandeira do cartão e troco), cupom com o rateio entre iFood e Loja, observações de
+     * entrega/retirada e código de coleta.
+     *
+     * <p>Tudo aqui é apenas para exibição — nenhum destes campos entra no cálculo de
+     * {@code totalValue}, {@code deliveryFee}, {@code serviceFee}, {@code totalCost} ou
+     * {@code estimatedProfit}. Em particular, o desconto é gravado para ser mostrado na
+     * comanda, nunca deduzido de nenhum valor.
+     */
+    private void applyOrderDetails(Order order, IfoodOrderDetailResponse detail) {
+        order.setDisplayId(detail.getDisplayId());
+        order.setOrderType(OrderType.fromExternal(detail.getOrderType()));
+        order.setOrderTiming(OrderTiming.fromExternal(detail.getOrderTiming()));
+        if (detail.getCustomer() != null) {
+            order.setCustomerDocument(detail.getCustomer().getDocumentNumber());
+        }
+
+        applyPayments(order, detail.getPayments());
+        applyBenefits(order, detail.getBenefits());
+
+        IfoodOrderDetailResponse.Delivery delivery = detail.getDelivery();
+        if (delivery != null) {
+            order.setDeliveryMode(delivery.getMode());
+            order.setDeliveredBy(delivery.getDeliveredBy());
+            order.setDeliveryDateTime(parseDateTime(delivery.getDeliveryDateTime()));
+            order.setDeliveryObservations(delivery.getObservations());
+            order.setPickupCode(delivery.getPickupCode());
+        }
+
+        IfoodOrderDetailResponse.Takeout takeout = detail.getTakeout();
+        if (takeout != null) {
+            order.setTakeoutMode(takeout.getMode());
+            order.setTakeoutDateTime(parseDateTime(takeout.getTakeoutDateTime()));
+        }
+    }
+
+    private void applyPayments(Order order, IfoodOrderDetailResponse.Payments payments) {
+        List<OrderPaymentMethod> methods = new ArrayList<>();
+        order.setPaymentMethods(methods);
+        if (payments == null) return;
+
+        order.setPaymentPrepaidAmount(payments.getPrepaid());
+        order.setPaymentPendingAmount(payments.getPending());
+        if (payments.getMethods() == null) return;
+
+        for (IfoodOrderDetailResponse.PaymentMethod remoteMethod : payments.getMethods()) {
+            if (remoteMethod == null) continue;
+            methods.add(OrderPaymentMethod.builder()
+                    .order(order)
+                    .method(remoteMethod.getMethod())
+                    .type(remoteMethod.getType())
+                    .currency(remoteMethod.getCurrency())
+                    .value(remoteMethod.getValue())
+                    .cardBrand(remoteMethod.getCard() != null ? remoteMethod.getCard().getBrand() : null)
+                    .changeFor(remoteMethod.getCash() != null ? remoteMethod.getCash().getChangeFor() : null)
+                    .build());
+        }
+    }
+
+    /**
+     * Soma o valor dos cupons e o rateio por patrocinador. O iFood pode enviar vários
+     * benefícios (carrinho, frete, item) e cada um com mais de um patrocinador; a comanda
+     * precisa do total e de quanto cada lado bancou.
+     */
+    private void applyBenefits(Order order, List<IfoodOrderDetailResponse.Benefit> benefits) {
+        if (benefits == null || benefits.isEmpty()) return;
+
+        BigDecimal total = BigDecimal.ZERO;
+        BigDecimal ifoodShare = BigDecimal.ZERO;
+        BigDecimal merchantShare = BigDecimal.ZERO;
+
+        for (IfoodOrderDetailResponse.Benefit benefit : benefits) {
+            if (benefit == null) continue;
+            if (benefit.getValue() != null) {
+                total = total.add(benefit.getValue());
+            }
+            if (benefit.getSponsorshipValues() == null) continue;
+            for (IfoodOrderDetailResponse.SponsorshipValue sponsor : benefit.getSponsorshipValues()) {
+                if (sponsor == null || sponsor.getValue() == null || sponsor.getName() == null) continue;
+                if (SPONSOR_IFOOD.equalsIgnoreCase(sponsor.getName())) {
+                    ifoodShare = ifoodShare.add(sponsor.getValue());
+                } else if (SPONSOR_MERCHANT.equalsIgnoreCase(sponsor.getName())) {
+                    merchantShare = merchantShare.add(sponsor.getValue());
+                } else {
+                    log.info("[iFood] patrocinador de cupom desconhecido '{}' — valor não rateado",
+                            sponsor.getName());
+                }
+            }
+        }
+
+        order.setDiscountTotal(total);
+        order.setDiscountIfoodValue(ifoodShare);
+        order.setDiscountMerchantValue(merchantShare);
+    }
+
     private List<OrderItem> buildItems(IfoodOrderDetailResponse detail, UUID merchantId) {
         List<OrderItem> items = new ArrayList<>();
         if (detail.getItems() == null) return items;
@@ -254,6 +359,7 @@ public class IfoodOrderImportService {
                     .quantity(remoteItem.getQuantity() != null ? remoteItem.getQuantity().intValue() : 1)
                     .unitPrice(remoteItem.getUnitPrice() != null ? remoteItem.getUnitPrice() : BigDecimal.ZERO)
                     .unitCost(unitCost)
+                    .observations(remoteItem.getObservations())
                     .build();
 
             ResolvedSubItems resolved =
@@ -414,13 +520,30 @@ public class IfoodOrderImportService {
         if (createdAt == null || createdAt.isBlank()) {
             return LocalDateTime.now(BRAZIL_ZONE);
         }
+        LocalDateTime parsed = parseDateTime(createdAt);
+        if (parsed == null) {
+            log.warn("[iFood] createdAt inválido '{}', usando hora atual", createdAt);
+            return LocalDateTime.now(BRAZIL_ZONE);
+        }
+        return parsed;
+    }
+
+    /**
+     * Converte um timestamp UTC do iFood para a hora local de São Paulo. Diferente de
+     * {@link #parseCreatedAt}, um valor ausente ou inválido resulta em {@code null} — estes
+     * campos são opcionais e não devem inventar uma data.
+     */
+    private LocalDateTime parseDateTime(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
         try {
-            return OffsetDateTime.parse(createdAt)
+            return OffsetDateTime.parse(value)
                     .atZoneSameInstant(BRAZIL_ZONE)
                     .toLocalDateTime();
         } catch (RuntimeException e) {
-            log.warn("[iFood] createdAt inválido '{}', usando hora atual", createdAt);
-            return LocalDateTime.now(BRAZIL_ZONE);
+            log.warn("[iFood] data/hora inválida '{}' — campo ignorado", value);
+            return null;
         }
     }
 }

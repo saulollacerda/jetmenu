@@ -45,6 +45,14 @@ public class OrderItem {
     @Column(name = "unit_cost", precision = 19, scale = 4)
     private BigDecimal unitCost;
 
+    /**
+     * Special instructions the customer wrote for this item ("sem cebola"), as imported from
+     * the marketplace. Must be displayed on the order ticket (iFood Order homologation).
+     * Null for manual orders and for imports without observations.
+     */
+    @Column(name = "observations", length = 1024)
+    private String observations;
+
     @OneToMany(mappedBy = "orderItem", cascade = CascadeType.ALL, orphanRemoval = true)
     @BatchSize(size = 30)
     @ToString.Exclude

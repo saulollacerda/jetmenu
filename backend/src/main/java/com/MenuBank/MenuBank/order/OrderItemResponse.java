@@ -22,6 +22,12 @@ public class OrderItemResponse {
     private BigDecimal totalCost;
 
     /**
+     * Observação/instrução especial que o cliente escreveu para este item ("sem cebola").
+     * Nula em pedidos manuais e em importações sem observação.
+     */
+    private String observations;
+
+    /**
      * Insumos da ficha técnica do produto (Includes) no momento da consulta.
      * Esses são os ingredientes base do produto, fixos por receita.
      */

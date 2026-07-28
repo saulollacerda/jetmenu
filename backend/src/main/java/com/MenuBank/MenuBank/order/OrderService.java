@@ -176,6 +176,7 @@ public class OrderService {
 
         List<OrderItem> newItems = buildItems(merchantId, request.getItems());
         carryOverExtraSalePrices(order, newItems);
+        carryOverItemObservations(order, newItems);
 
         BigDecimal totalValue = calculateTotalValue(newItems, order.getDeliveryFee(), order.getServiceFee());
 
@@ -367,6 +368,26 @@ public class OrderService {
         }
     }
 
+    /**
+     * Copia a observação importada de cada item ("sem cebola") para os itens reconstruídos a
+     * partir do request, casando por produto. O request da UI não carrega observação, então
+     * sem esse repasse uma edição apagaria a instrução do cliente — que a homologação do
+     * iFood exige exibir na comanda.
+     */
+    private void carryOverItemObservations(Order order, List<OrderItem> newItems) {
+        if (order.getItems() == null) return;
+        Map<UUID, String> observationsByProduct = new HashMap<>();
+        for (OrderItem item : order.getItems()) {
+            if (item.getObservations() == null || item.getProduct() == null) continue;
+            observationsByProduct.putIfAbsent(item.getProduct().getId(), item.getObservations());
+        }
+        if (observationsByProduct.isEmpty()) return;
+        for (OrderItem item : newItems) {
+            if (item.getObservations() != null || item.getProduct() == null) continue;
+            item.setObservations(observationsByProduct.get(item.getProduct().getId()));
+        }
+    }
+
     private OrderResponse toResponse(Order order) {
         return toResponse(order, null, null);
     }
@@ -426,7 +447,60 @@ public class OrderService {
                         order.getDeliveryFee(), order.getServiceFee()))
                 .orderFicha(orderFichaResponses)
                 .orderFichaCost(orderFichaCost)
+                // Dados descritivos do marketplace (homologação iFood): nulos em pedidos
+                // manuais e em pedidos importados antes da V27.
+                .displayId(order.getDisplayId())
+                .orderType(order.getOrderType())
+                .orderTiming(order.getOrderTiming())
+                .customerDocument(order.getCustomerDocument())
+                .paymentPrepaidAmount(order.getPaymentPrepaidAmount())
+                .paymentPendingAmount(order.getPaymentPendingAmount())
+                .paymentMethods(toPaymentMethodResponses(order))
+                .discountTotal(order.getDiscountTotal())
+                .discountIfoodValue(order.getDiscountIfoodValue())
+                .discountMerchantValue(order.getDiscountMerchantValue())
+                .deliveryMode(order.getDeliveryMode())
+                .deliveredBy(order.getDeliveredBy())
+                .deliveryDateTime(order.getDeliveryDateTime())
+                .deliveryObservations(order.getDeliveryObservations())
+                .pickupCode(order.getPickupCode())
+                .takeoutMode(order.getTakeoutMode())
+                .takeoutDateTime(order.getTakeoutDateTime())
                 .build();
+    }
+
+    /**
+     * Meios de pagamento do pedido. O troco ({@code changeAmount = changeFor − value}) é
+     * calculado aqui para que toda tela mostre o mesmo valor — exigência da homologação do
+     * módulo Order do iFood.
+     */
+    private List<OrderPaymentMethodResponse> toPaymentMethodResponses(Order order) {
+        if (order.getPaymentMethods() == null) {
+            return List.of();
+        }
+        return order.getPaymentMethods().stream()
+                .map(method -> OrderPaymentMethodResponse.builder()
+                        .id(method.getId())
+                        .method(method.getMethod())
+                        .type(method.getType())
+                        .cardBrand(method.getCardBrand())
+                        .value(method.getValue())
+                        .currency(method.getCurrency())
+                        .changeFor(method.getChangeFor())
+                        .changeAmount(computeChangeAmount(method))
+                        .build())
+                .toList();
+    }
+
+    /** Troco devido ao cliente. Null quando não há {@code changeFor} (pagamento sem troco). */
+    private BigDecimal computeChangeAmount(OrderPaymentMethod method) {
+        BigDecimal changeFor = method.getChangeFor();
+        if (changeFor == null) {
+            return null;
+        }
+        BigDecimal paid = method.getValue() != null ? method.getValue() : BigDecimal.ZERO;
+        BigDecimal change = changeFor.subtract(paid);
+        return change.signum() < 0 ? BigDecimal.ZERO : change;
     }
 
     /**
@@ -566,6 +640,7 @@ public class OrderService {
                 .unitPrice(item.getUnitPrice())
                 .unitCost(unitCost)
                 .totalCost(totalCost)
+                .observations(item.getObservations())
                 .insumos(insumos)
                 .extraIngredients(extraResponses)
                 .unmatchedSubItems(unmatchedResponses)

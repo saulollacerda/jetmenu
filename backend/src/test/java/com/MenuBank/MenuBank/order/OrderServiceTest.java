@@ -1479,5 +1479,111 @@ class OrderServiceTest {
             assertThat(response.getOrderFicha()).isEmpty();
         }
     }
+
+    /**
+     * Descriptive fields imported from iFood that the comanda must display
+     * (homologation of the Order module).
+     */
+    @Nested
+    @DisplayName("toResponse() — detalhes de pagamento, cupom e observações")
+    class HomologationDetailsResponse {
+
+        @Test
+        @DisplayName("deve expor identificação, documento, pagamento, cupom e observações do pedido")
+        void responseExposesImportedDetails() {
+            order.setOrigin(OrderOrigin.IFOOD);
+            order.setDisplayId("3421");
+            order.setOrderType(OrderType.DELIVERY);
+            order.setOrderTiming(OrderTiming.IMMEDIATE);
+            order.setCustomerDocument("12345678909");
+            order.setPaymentPrepaidAmount(new BigDecimal("10.00"));
+            order.setPaymentPendingAmount(new BigDecimal("39.97"));
+            order.setDiscountTotal(new BigDecimal("12.00"));
+            order.setDiscountIfoodValue(new BigDecimal("8.00"));
+            order.setDiscountMerchantValue(new BigDecimal("4.00"));
+            order.setDeliveryMode("DEFAULT");
+            order.setDeliveredBy("MERCHANT");
+            order.setDeliveryDateTime(LocalDateTime.of(2026, 7, 1, 18, 40));
+            order.setDeliveryObservations("Portão azul");
+            order.setPickupCode("9182");
+            order.setTakeoutMode("DEFAULT");
+            order.setTakeoutDateTime(LocalDateTime.of(2026, 7, 1, 18, 30));
+            order.setPaymentMethods(new ArrayList<>(List.of(
+                    OrderPaymentMethod.builder()
+                            .method("CASH").type("OFFLINE").currency("BRL")
+                            .value(new BigDecimal("39.97"))
+                            .changeFor(new BigDecimal("50.00"))
+                            .build(),
+                    OrderPaymentMethod.builder()
+                            .method("CREDIT").type("ONLINE").currency("BRL")
+                            .value(new BigDecimal("10.00"))
+                            .cardBrand("VISA")
+                            .build())));
+            order.getItems().get(0).setObservations("sem granola");
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse response = orderService.findById(merchantId, orderId);
+
+            assertThat(response.getDisplayId()).isEqualTo("3421");
+            assertThat(response.getOrderType()).isEqualTo(OrderType.DELIVERY);
+            assertThat(response.getOrderTiming()).isEqualTo(OrderTiming.IMMEDIATE);
+            assertThat(response.getCustomerDocument()).isEqualTo("12345678909");
+            assertThat(response.getPaymentPrepaidAmount()).isEqualByComparingTo("10.00");
+            assertThat(response.getPaymentPendingAmount()).isEqualByComparingTo("39.97");
+            assertThat(response.getDiscountTotal()).isEqualByComparingTo("12.00");
+            assertThat(response.getDiscountIfoodValue()).isEqualByComparingTo("8.00");
+            assertThat(response.getDiscountMerchantValue()).isEqualByComparingTo("4.00");
+            assertThat(response.getDeliveryMode()).isEqualTo("DEFAULT");
+            assertThat(response.getDeliveredBy()).isEqualTo("MERCHANT");
+            assertThat(response.getDeliveryDateTime()).isEqualTo(LocalDateTime.of(2026, 7, 1, 18, 40));
+            assertThat(response.getDeliveryObservations()).isEqualTo("Portão azul");
+            assertThat(response.getPickupCode()).isEqualTo("9182");
+            assertThat(response.getTakeoutMode()).isEqualTo("DEFAULT");
+            assertThat(response.getTakeoutDateTime()).isEqualTo(LocalDateTime.of(2026, 7, 1, 18, 30));
+
+            assertThat(response.getPaymentMethods()).hasSize(2);
+            assertThat(response.getPaymentMethods().get(0).getMethod()).isEqualTo("CASH");
+            assertThat(response.getPaymentMethods().get(0).getChangeFor()).isEqualByComparingTo("50.00");
+            // troco = changeFor − value, calculado no backend para todo cliente mostrar o mesmo
+            assertThat(response.getPaymentMethods().get(0).getChangeAmount()).isEqualByComparingTo("10.03");
+            assertThat(response.getPaymentMethods().get(0).getCardBrand()).isNull();
+            assertThat(response.getPaymentMethods().get(1).getCardBrand()).isEqualTo("VISA");
+            assertThat(response.getPaymentMethods().get(1).getValue()).isEqualByComparingTo("10.00");
+            assertThat(response.getPaymentMethods().get(1).getChangeAmount()).isNull();
+
+            assertThat(response.getItems().get(0).getObservations()).isEqualTo("sem granola");
+        }
+
+        @Test
+        @DisplayName("pedido antigo/manual: campos novos nulos e lista de pagamentos vazia")
+        void responseForLegacyOrder() {
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse response = orderService.findById(merchantId, orderId);
+
+            assertThat(response.getDisplayId()).isNull();
+            assertThat(response.getOrderType()).isNull();
+            assertThat(response.getOrderTiming()).isNull();
+            assertThat(response.getCustomerDocument()).isNull();
+            assertThat(response.getDiscountTotal()).isNull();
+            assertThat(response.getPickupCode()).isNull();
+            assertThat(response.getPaymentMethods()).isEmpty();
+            assertThat(response.getItems().get(0).getObservations()).isNull();
+        }
+
+        @Test
+        @DisplayName("editar o pedido não pode apagar a observação importada do item")
+        void updateKeepsImportedItemObservations() {
+            order.getItems().get(0).setObservations("sem granola");
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            OrderResponse response = orderService.update(merchantId, orderId, orderRequest);
+
+            assertThat(response.getItems().get(0).getObservations()).isEqualTo("sem granola");
+        }
+    }
 }
 

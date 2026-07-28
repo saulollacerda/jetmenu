@@ -728,4 +728,231 @@ class IfoodOrderImportServiceTest {
             assertThat(captor.getValue().getOrderFicha()).isEmpty();
         }
     }
+
+    /**
+     * Fields required by the iFood Order module homologation: card brand, cash change,
+     * coupon value and who sponsors it, observations, pickup code and customer document.
+     */
+    @Nested
+    @DisplayName("detalhes de homologação (pagamento, cupom, observações)")
+    class HomologationDetails {
+
+        private Order importAndCapture(IfoodOrderDetailResponse detail) {
+            given(productRepository.findByExternalIdAndMerchantId("PDV-1", merchantId))
+                    .willReturn(Optional.of(product));
+            given(orderRepository.existsByExternalOrderIdAndMerchantId("ord-1", merchantId))
+                    .willReturn(false);
+
+            importService.importOrder(detail, OrderStatus.PAID, RAW_JSON);
+
+            org.mockito.ArgumentCaptor<Order> captor = org.mockito.ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            return captor.getValue();
+        }
+
+        @Test
+        @DisplayName("deve persistir displayId, tipo e timing do pedido")
+        void shouldPersistOrderIdentity() {
+            IfoodOrderDetailResponse detail = baseDetail();
+            detail.setDisplayId("3421");
+            detail.setOrderType("TAKEOUT");
+            detail.setOrderTiming("SCHEDULED");
+
+            Order saved = importAndCapture(detail);
+
+            assertThat(saved.getDisplayId()).isEqualTo("3421");
+            assertThat(saved.getOrderType()).isEqualTo(com.MenuBank.MenuBank.order.OrderType.TAKEOUT);
+            assertThat(saved.getOrderTiming()).isEqualTo(com.MenuBank.MenuBank.order.OrderTiming.SCHEDULED);
+        }
+
+        @Test
+        @DisplayName("deve ignorar orderType/orderTiming desconhecidos em vez de quebrar a importação")
+        void shouldIgnoreUnknownOrderTypeAndTiming() {
+            IfoodOrderDetailResponse detail = baseDetail();
+            detail.setOrderType("SOMETHING_NEW");
+            detail.setOrderTiming("");
+
+            Order saved = importAndCapture(detail);
+
+            assertThat(saved.getOrderType()).isNull();
+            assertThat(saved.getOrderTiming()).isNull();
+        }
+
+        @Test
+        @DisplayName("deve persistir o CPF/CNPJ do cliente informado para a nota fiscal")
+        void shouldPersistCustomerDocument() {
+            IfoodOrderDetailResponse detail = baseDetail();
+            detail.getCustomer().setDocumentNumber("12345678909");
+
+            Order saved = importAndCapture(detail);
+
+            assertThat(saved.getCustomerDocument()).isEqualTo("12345678909");
+        }
+
+        @Test
+        @DisplayName("deve persistir cada meio de pagamento com bandeira do cartão e troco")
+        void shouldPersistPaymentMethods() {
+            IfoodOrderDetailResponse detail = baseDetail();
+            detail.setPayments(payments());
+
+            Order saved = importAndCapture(detail);
+
+            assertThat(saved.getPaymentPrepaidAmount()).isEqualByComparingTo("10.00");
+            assertThat(saved.getPaymentPendingAmount()).isEqualByComparingTo("39.97");
+            assertThat(saved.getPaymentMethods()).hasSize(2);
+
+            com.MenuBank.MenuBank.order.OrderPaymentMethod cash = saved.getPaymentMethods().get(0);
+            assertThat(cash.getOrder()).isSameAs(saved);
+            assertThat(cash.getMethod()).isEqualTo("CASH");
+            assertThat(cash.getType()).isEqualTo("OFFLINE");
+            assertThat(cash.getCurrency()).isEqualTo("BRL");
+            assertThat(cash.getValue()).isEqualByComparingTo("39.97");
+            assertThat(cash.getChangeFor()).isEqualByComparingTo("50.00");
+            assertThat(cash.getCardBrand()).isNull();
+
+            com.MenuBank.MenuBank.order.OrderPaymentMethod credit = saved.getPaymentMethods().get(1);
+            assertThat(credit.getCardBrand()).isEqualTo("VISA");
+            assertThat(credit.getChangeFor()).isNull();
+        }
+
+        @Test
+        @DisplayName("deve somar o cupom e o rateio entre iFood e Loja")
+        void shouldPersistBenefitSplit() {
+            IfoodOrderDetailResponse detail = baseDetail();
+            detail.setBenefits(List.of(
+                    benefit("12.00", "CART", sponsor("IFOOD", "8.00"), sponsor("MERCHANT", "4.00")),
+                    benefit("3.00", "DELIVERY_FEE", sponsor("MERCHANT", "3.00"))));
+
+            Order saved = importAndCapture(detail);
+
+            assertThat(saved.getDiscountTotal()).isEqualByComparingTo("15.00");
+            assertThat(saved.getDiscountIfoodValue()).isEqualByComparingTo("8.00");
+            assertThat(saved.getDiscountMerchantValue()).isEqualByComparingTo("7.00");
+        }
+
+        @Test
+        @DisplayName("não deve alterar totalValue/deliveryFee por causa do cupom")
+        void shouldNotChangeMoneyFieldsBecauseOfBenefits() {
+            IfoodOrderDetailResponse detail = baseDetail();
+            detail.setBenefits(List.of(benefit("12.00", "CART", sponsor("IFOOD", "12.00"))));
+
+            Order saved = importAndCapture(detail);
+
+            assertThat(saved.getTotalValue()).isEqualByComparingTo("49.97");
+            assertThat(saved.getDeliveryFee()).isEqualByComparingTo("5.99");
+        }
+
+        @Test
+        @DisplayName("deve persistir observações de entrega e o código de coleta")
+        void shouldPersistDeliveryDetails() {
+            IfoodOrderDetailResponse detail = baseDetail();
+            IfoodOrderDetailResponse.Delivery delivery = new IfoodOrderDetailResponse.Delivery();
+            delivery.setMode("DEFAULT");
+            delivery.setDeliveredBy("MERCHANT");
+            delivery.setDeliveryDateTime("2026-07-01T21:40:00Z");
+            delivery.setObservations("Portão azul, tocar a campainha");
+            delivery.setPickupCode("9182");
+            detail.setDelivery(delivery);
+
+            Order saved = importAndCapture(detail);
+
+            assertThat(saved.getDeliveryMode()).isEqualTo("DEFAULT");
+            assertThat(saved.getDeliveredBy()).isEqualTo("MERCHANT");
+            // 21:40Z → 18:40 em America/Sao_Paulo
+            assertThat(saved.getDeliveryDateTime())
+                    .isEqualTo(java.time.LocalDateTime.of(2026, 7, 1, 18, 40));
+            assertThat(saved.getDeliveryObservations()).isEqualTo("Portão azul, tocar a campainha");
+            assertThat(saved.getPickupCode()).isEqualTo("9182");
+        }
+
+        @Test
+        @DisplayName("deve persistir os dados de retirada (takeout)")
+        void shouldPersistTakeoutDetails() {
+            IfoodOrderDetailResponse detail = baseDetail();
+            detail.setOrderType("TAKEOUT");
+            IfoodOrderDetailResponse.Takeout takeout = new IfoodOrderDetailResponse.Takeout();
+            takeout.setMode("DEFAULT");
+            takeout.setTakeoutDateTime("2026-07-01T21:30:00Z");
+            detail.setTakeout(takeout);
+
+            Order saved = importAndCapture(detail);
+
+            assertThat(saved.getTakeoutMode()).isEqualTo("DEFAULT");
+            assertThat(saved.getTakeoutDateTime())
+                    .isEqualTo(java.time.LocalDateTime.of(2026, 7, 1, 18, 30));
+        }
+
+        @Test
+        @DisplayName("deve persistir a observação do item")
+        void shouldPersistItemObservations() {
+            IfoodOrderDetailResponse detail = baseDetail();
+            detail.getItems().get(0).setObservations("sem granola");
+
+            Order saved = importAndCapture(detail);
+
+            assertThat(saved.getItems()).hasSize(1);
+            assertThat(saved.getItems().get(0).getObservations()).isEqualTo("sem granola");
+        }
+
+        @Test
+        @DisplayName("payload sem os blocos novos importa com os campos nulos")
+        void shouldImportWithoutTheNewBlocks() {
+            Order saved = importAndCapture(baseDetail());
+
+            assertThat(saved.getPaymentMethods()).isEmpty();
+            assertThat(saved.getPaymentPrepaidAmount()).isNull();
+            assertThat(saved.getPaymentPendingAmount()).isNull();
+            assertThat(saved.getDiscountTotal()).isNull();
+            assertThat(saved.getDiscountIfoodValue()).isNull();
+            assertThat(saved.getDiscountMerchantValue()).isNull();
+            assertThat(saved.getDeliveryMode()).isNull();
+            assertThat(saved.getPickupCode()).isNull();
+            assertThat(saved.getTakeoutMode()).isNull();
+            assertThat(saved.getCustomerDocument()).isNull();
+            assertThat(saved.getItems().get(0).getObservations()).isNull();
+        }
+
+        private IfoodOrderDetailResponse.Payments payments() {
+            IfoodOrderDetailResponse.Payments payments = new IfoodOrderDetailResponse.Payments();
+            payments.setPrepaid(new BigDecimal("10.00"));
+            payments.setPending(new BigDecimal("39.97"));
+
+            IfoodOrderDetailResponse.PaymentMethod cash = new IfoodOrderDetailResponse.PaymentMethod();
+            cash.setMethod("CASH");
+            cash.setType("OFFLINE");
+            cash.setCurrency("BRL");
+            cash.setValue(new BigDecimal("39.97"));
+            IfoodOrderDetailResponse.Cash cashInfo = new IfoodOrderDetailResponse.Cash();
+            cashInfo.setChangeFor(new BigDecimal("50.00"));
+            cash.setCash(cashInfo);
+
+            IfoodOrderDetailResponse.PaymentMethod credit = new IfoodOrderDetailResponse.PaymentMethod();
+            credit.setMethod("CREDIT");
+            credit.setType("ONLINE");
+            credit.setCurrency("BRL");
+            credit.setValue(new BigDecimal("10.00"));
+            IfoodOrderDetailResponse.Card card = new IfoodOrderDetailResponse.Card();
+            card.setBrand("VISA");
+            credit.setCard(card);
+
+            payments.setMethods(List.of(cash, credit));
+            return payments;
+        }
+
+        private IfoodOrderDetailResponse.Benefit benefit(
+                String value, String target, IfoodOrderDetailResponse.SponsorshipValue... sponsors) {
+            IfoodOrderDetailResponse.Benefit benefit = new IfoodOrderDetailResponse.Benefit();
+            benefit.setValue(new BigDecimal(value));
+            benefit.setTarget(target);
+            benefit.setSponsorshipValues(List.of(sponsors));
+            return benefit;
+        }
+
+        private IfoodOrderDetailResponse.SponsorshipValue sponsor(String name, String value) {
+            IfoodOrderDetailResponse.SponsorshipValue sponsor = new IfoodOrderDetailResponse.SponsorshipValue();
+            sponsor.setName(name);
+            sponsor.setValue(new BigDecimal(value));
+            return sponsor;
+        }
+    }
 }
