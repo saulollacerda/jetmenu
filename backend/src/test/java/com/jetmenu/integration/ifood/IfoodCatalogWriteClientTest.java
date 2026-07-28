@@ -74,10 +74,10 @@ class IfoodCatalogWriteClientTest {
                       {
                         "item": {
                           "id":"item-1","type":"DEFAULT","categoryId":"cat-remote-1",
-                          "status":"UNAVAILABLE","price":{"value":25.00},"externalCode":"MB-1",
+                          "status":"UNAVAILABLE","price":{"value":25.00},"externalCode":"JM-1",
                           "contextModifiers":[
                             {"catalogContext":"WHITELABEL","price":{"value":25.00},
-                             "status":"AVAILABLE","externalCode":"MB-1"}
+                             "status":"AVAILABLE","externalCode":"JM-1"}
                           ]
                         },
                         "products":[{"id":"prod-1","name":"X-Burger"}],
@@ -88,7 +88,7 @@ class IfoodCatalogWriteClientTest {
               .andRespond(withSuccess());
 
         client.upsertItem("access.jwt", "ifood-m1", IfoodCatalogItemRequest.whitelabelItem(
-                "item-1", "cat-remote-1", "MB-1", new BigDecimal("25.00"), "AVAILABLE",
+                "item-1", "cat-remote-1", "JM-1", new BigDecimal("25.00"), "AVAILABLE",
                 "prod-1", "X-Burger", null));
 
         server.verify();
@@ -102,7 +102,7 @@ class IfoodCatalogWriteClientTest {
               .andRespond(withResourceNotFound());
 
         assertThatThrownBy(() -> client.upsertItem("access.jwt", "ifood-m1",
-                IfoodCatalogItemRequest.whitelabelItem("item-1", "cat-1", "MB-1",
+                IfoodCatalogItemRequest.whitelabelItem("item-1", "cat-1", "JM-1",
                         BigDecimal.ONE, "AVAILABLE", "prod-1", "X", null)))
                 .isInstanceOf(HttpClientErrorException.NotFound.class);
         server.verify();

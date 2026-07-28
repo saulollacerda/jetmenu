@@ -63,8 +63,8 @@ class IfoodCatalogWriteControllerTest {
         UUID failedId = UUID.randomUUID();
         given(publishService.publish(eq(merchantId), anyList())).willReturn(
                 IfoodCatalogPublishResult.of(List.of(
-                        new ItemOutcome(productId, "X-Burger", "MB-1", Outcome.PUBLISHED, null),
-                        new ItemOutcome(failedId, "Quebrado", "MB-2", Outcome.FAILED,
+                        new ItemOutcome(productId, "X-Burger", "JM-1", Outcome.PUBLISHED, null),
+                        new ItemOutcome(failedId, "Quebrado", "JM-2", Outcome.FAILED,
                                 "Item ou categoria não encontrado no iFood."))));
 
         mockMvc.perform(post("/api/integrations/ifood/catalog/publish").with(csrf())
@@ -75,7 +75,7 @@ class IfoodCatalogWriteControllerTest {
                 .andExpect(jsonPath("$.skippedProducts").value(1))
                 .andExpect(jsonPath("$.items[0].productId").value(productId.toString()))
                 .andExpect(jsonPath("$.items[0].name").value("X-Burger"))
-                .andExpect(jsonPath("$.items[0].externalCode").value("MB-1"))
+                .andExpect(jsonPath("$.items[0].externalCode").value("JM-1"))
                 .andExpect(jsonPath("$.items[0].outcome").value("PUBLISHED"))
                 .andExpect(jsonPath("$.items[0].reason").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.items[1].outcome").value("FAILED"))

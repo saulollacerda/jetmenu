@@ -129,7 +129,7 @@ class IfoodCatalogPublishServiceTest {
             assertThat(result.getItems()).singleElement().satisfies(item -> {
                 assertThat(item.getProductId()).isEqualTo(burger.getId());
                 assertThat(item.getName()).isEqualTo("X-Burger");
-                assertThat(item.getExternalCode()).isEqualTo("MB-" + burger.getId());
+                assertThat(item.getExternalCode()).isEqualTo("JM-" + burger.getId());
                 assertThat(item.getOutcome()).isEqualTo(Outcome.PUBLISHED);
                 assertThat(item.getReason()).isNull();
             });

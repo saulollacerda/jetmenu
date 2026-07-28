@@ -429,7 +429,7 @@ public class IfoodCatalogPublishService {
         if (externalId != null && !externalId.isBlank()) {
             return externalId;
         }
-        return "MB-" + product.getId();
+        return "JM-" + product.getId();
     }
 
     // --------------------------------------------------------------- resilience

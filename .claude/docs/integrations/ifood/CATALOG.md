@@ -235,10 +235,10 @@ off delivery. Republish via `POST /publish` to restore the WHITELABEL-only shape
 {
   "item": {
     "id": "<ifood_item_id>", "type": "DEFAULT", "categoryId": "<Category.externalId>",
-    "status": "UNAVAILABLE", "price": { "value": 25.00 }, "externalCode": "MB-<product.id>",
+    "status": "UNAVAILABLE", "price": { "value": 25.00 }, "externalCode": "JM-<product.id>",
     "contextModifiers": [
       { "catalogContext": "WHITELABEL", "price": { "value": 25.00 },
-        "status": "AVAILABLE", "externalCode": "MB-<product.id>" }
+        "status": "AVAILABLE", "externalCode": "JM-<product.id>" }
     ]
   },
   "products": [ { "id": "<ifood_product_id>", "name": "X-Burger" } ],
@@ -248,7 +248,7 @@ off delivery. Republish via `POST /publish` to restore the WHITELABEL-only shape
 
 - `contextModifiers[0].status` is `AVAILABLE` for `ProductStatus.ACTIVE`, `UNAVAILABLE` for
   `INACTIVE`. The root status is always `UNAVAILABLE`.
-- `externalCode` uses `Product.externalId` when set, otherwise the derived `"MB-" + product.id`.
+- `externalCode` uses `Product.externalId` when set, otherwise the derived `"JM-" + product.id`.
   An existing `externalId` is never overwritten.
 - `products[].description` is omitted — JetMenu has no product description yet.
 
