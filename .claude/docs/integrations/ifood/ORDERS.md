@@ -14,7 +14,9 @@ emitido pelo iFood muito depois (entrega confirmada, ou timeout de 4h/6h/13h dep
 loja/entrega, somado a `deliveryTimeInSeconds`). Como o `CONCLUDED` chega **automaticamente** mesmo que
 o app nunca chame `confirm`/`startPreparation`/`dispatch`, ele funciona como *safety net*: qualquer
 pedido cujo `CONFIRMED` tenha sido perdido (ou anterior a esta feature) é importado nesse momento.
-Não há máquina de estados local nem ações de confirmar/preparar/despachar.
+Não há máquina de estados local; as ações de escrita disponíveis são as exigidas pela homologação
+(`confirm`, `readyToPickup`, `dispatch`) — ver [Ações do ciclo de vida](#ações-do-ciclo-de-vida-escrita).
+`startPreparation` não é implementado (não é exigido na homologação).
 
 | Evento | Pedido já existe? | Ação |
 |---|---|---|
@@ -40,6 +42,46 @@ O cancelamento remove o pedido das métricas pela simples troca de status — n�
 estorno. Quando um pedido **já importado** é cancelado, é criada uma notificação `ORDER_CANCELLED`
 (`NotificationType`) para o lojista, incluindo `cancelReasonDescription` quando disponível no detalhe
 do pedido.
+
+## Ações do ciclo de vida (escrita)
+
+Ações disparadas pelo **lojista** (nunca automáticas — não existe scheduler que confirme pedidos).
+`IfoodOrderActionClient` → `IfoodOrderActionService` → `IfoodOrderActionController`, com o mesmo
+padrão de retry em 401 do `IfoodOrderSyncService` (401 → `handleUnauthorized()` → repete uma vez).
+
+| Ação | Chamada ao iFood | Status local depois | Quando |
+|---|---|---|---|
+| Confirmar | `POST /orders/{id}/confirm` | `PENDING` (inalterado) | SLA de **8 min** para `DELIVERY` e `TAKEOUT`, independente do `orderTiming` |
+| Pronto para retirada | `PUT /orders/{id}/readyToPickup` | `READY` | Pedidos `TAKEOUT`, para notificar o cliente |
+| Despachar | `PUT /orders/{id}/dispatch` | `DELIVERED` | Pedidos `DELIVERY` com entrega própria, ao sair para entrega |
+
+> **Verbos HTTP não validados.** `PUT` para `readyToPickup`/`dispatch` vem do `HOMOLOGATION.md`;
+> `confirm` usa `POST`. Não foi possível conferir com a doc oficial do iFood — validar contra a
+> sandbox antes da homologação. Cada verbo está em uma única linha do `IfoodOrderActionClient`.
+
+Guard rails (rejeitam antes de chamar o iFood): pedido inexistente para o merchant (404), pedido com
+`origin != IFOOD`, sem `externalOrderId`, ou em status terminal (`CANCELLED`/`TEST`) → 409. Erros do
+iFood: 404 → 404, 401 persistente → reautorização (409), demais `4xx` → 400 com o detalhe da API.
+O status local só muda **depois** de o iFood aceitar a ação.
+
+### SLA de confirmação (8 minutos)
+
+Regra: `deadline = Order.dateTime + 8 min` (`Order.dateTime` já é `createdAt` convertido para
+`America/Sao_Paulo`). O backend expõe isso pronto em
+`GET /api/integrations/ifood/orders/{orderId}/confirmation-window` →
+`{orderId, createdAt, deadline, remainingSeconds, expired}`, com `remainingSeconds` travado em zero
+quando a janela acaba. A UI pode chamar uma vez e contar regressivamente a partir do `deadline`.
+
+### Endpoints REST expostos ao frontend
+
+| Método | Path | Resposta |
+|---|---|---|
+| POST | `/api/integrations/ifood/orders/{orderId}/confirm` | `200` `{orderId, externalOrderId, status}` |
+| POST | `/api/integrations/ifood/orders/{orderId}/ready-to-pickup` | `200` `{orderId, externalOrderId, status}` |
+| POST | `/api/integrations/ifood/orders/{orderId}/dispatch` | `200` `{orderId, externalOrderId, status}` |
+| GET | `/api/integrations/ifood/orders/{orderId}/confirmation-window` | `200` `{orderId, createdAt, deadline, remainingSeconds, expired}` |
+
+Nenhuma requisição tem corpo. Erros são `ProblemDetail` com `detail` em pt-BR.
 
 ## Polling de eventos
 
