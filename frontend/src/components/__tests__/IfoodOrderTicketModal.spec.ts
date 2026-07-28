@@ -3,7 +3,9 @@ import { nextTick } from 'vue'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import IfoodOrderTicketModal from '@/components/IfoodOrderTicketModal.vue'
 import { ifoodOrderActionService } from '@/services/ifoodOrderActionService'
+import { notificationService } from '@/services/notificationService'
 import type { OrderResponse } from '@/types/Order'
+import type { NotificationResponse } from '@/types/Notification'
 
 vi.mock('@/services/ifoodOrderActionService', async (importOriginal) => {
   const original =
@@ -15,11 +17,55 @@ vi.mock('@/services/ifoodOrderActionService', async (importOriginal) => {
       readyToPickup: vi.fn(),
       dispatch: vi.fn(),
       getConfirmationWindow: vi.fn(),
+      cancellationReasons: vi.fn(),
+      cancel: vi.fn(),
+      acceptCancellationRequest: vi.fn(),
+      denyCancellationRequest: vi.fn(),
     },
   }
 })
 
+vi.mock('@/services/notificationService')
+
 const mockedService = vi.mocked(ifoodOrderActionService)
+const mockedNotifications = vi.mocked(notificationService)
+
+const REASONS = [
+  { cancelCodeId: '501', description: 'PROBLEMAS DE SISTEMA' },
+  { cancelCodeId: '502', description: 'PEDIDO DUPLICADO' },
+]
+
+function notificationPage(items: NotificationResponse[]) {
+  return {
+    content: items,
+    totalElements: items.length,
+    totalPages: items.length === 0 ? 0 : 1,
+    number: 0,
+    size: 50,
+    first: true,
+    last: true,
+    empty: items.length === 0,
+  }
+}
+
+/** A cancellation request raised by the customer for the order under test. */
+function cancellationRequest(
+  overrides: Partial<NotificationResponse> = {},
+): NotificationResponse {
+  return {
+    id: 'n-1',
+    type: 'ORDER_CANCELLATION_REQUESTED',
+    title: 'Solicitação de cancelamento',
+    message: 'O cliente solicitou o cancelamento do pedido ext-1.',
+    // referenceData carries the LOCAL order id — that is how the ticket finds the request.
+    referenceData: 'o1',
+    referenceDisplay: 'ext-1',
+    status: 'UNREAD',
+    createdAt: '2026-07-01T18:02:00Z',
+    resolvedAt: null,
+    ...overrides,
+  }
+}
 
 /** Bare order: every field the homologation adds is absent (manual/legacy order). */
 function bareOrder(overrides: Partial<OrderResponse> = {}): OrderResponse {
@@ -122,6 +168,9 @@ describe('IfoodOrderTicketModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockedService.getConfirmationWindow.mockResolvedValue(WINDOW_OPEN)
+    mockedService.cancellationReasons.mockResolvedValue(REASONS)
+    mockedNotifications.findAll.mockResolvedValue(notificationPage([]))
+    mockedNotifications.dismiss.mockResolvedValue()
   })
 
   afterEach(() => {
@@ -567,6 +616,324 @@ describe('IfoodOrderTicketModal', () => {
       await wrapper.get('[data-testid="ui-modal-close"]').trigger('click')
 
       expect(wrapper.emitted('close')).toBeTruthy()
+    })
+  })
+
+  describe('merchant-initiated cancellation', () => {
+    /** Opens the cancel panel and waits for iFood's reason list. */
+    async function openCancelPanel(wrapper: ReturnType<typeof mountTicket>) {
+      await wrapper.get('[data-testid="ifood-ticket-cancel"]').trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    it('should not offer cancellation for a non-iFood order', async () => {
+      const wrapper = mountTicket(bareOrder({ origin: 'MENUBANK' }))
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="ifood-ticket-cancel"]').exists()).toBe(false)
+    })
+
+    it('should not offer cancellation for an already cancelled order', async () => {
+      const wrapper = mountTicket(fullOrder({ status: 'CANCELLED' }))
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="ifood-ticket-cancel"]').exists()).toBe(false)
+    })
+
+    it('should not offer cancellation for a test order', async () => {
+      const wrapper = mountTicket(fullOrder({ status: 'TEST' }))
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="ifood-ticket-cancel"]').exists()).toBe(false)
+    })
+
+    it('should not fetch the reasons before the merchant opens the cancel flow', async () => {
+      mountTicket(fullOrder())
+      await flushPromises()
+
+      expect(mockedService.cancellationReasons).not.toHaveBeenCalled()
+    })
+
+    it('should show the official iFood reasons when the cancel flow is opened', async () => {
+      const wrapper = await openCancelPanel(mountTicket(fullOrder()))
+
+      expect(mockedService.cancellationReasons).toHaveBeenCalledWith('o1')
+      const options = wrapper.findAll('[data-testid="ifood-ticket-cancel-reason"] option')
+      const texts = options.map((o) => o.text())
+      expect(texts).toContain('PROBLEMAS DE SISTEMA')
+      expect(texts).toContain('PEDIDO DUPLICADO')
+    })
+
+    it('should never accept a reason typed by the merchant in place of the iFood list', async () => {
+      const wrapper = await openCancelPanel(mountTicket(fullOrder()))
+
+      // A observação livre é complementar; o motivo em si vem sempre do <select>.
+      const note = wrapper.get('[data-testid="ifood-ticket-cancel-note"]')
+      await note.setValue('quero cancelar porque sim')
+      await nextTick()
+
+      expect(wrapper.find('[data-testid="ifood-ticket-cancel-continue"]').attributes('disabled'))
+        .toBeDefined()
+    })
+
+    it('should require a confirmation step before calling the cancel endpoint', async () => {
+      const wrapper = await openCancelPanel(mountTicket(fullOrder()))
+      await wrapper.get('[data-testid="ifood-ticket-cancel-reason"]').setValue('501')
+
+      await wrapper.get('[data-testid="ifood-ticket-cancel-continue"]').trigger('click')
+      await nextTick()
+
+      expect(mockedService.cancel).not.toHaveBeenCalled()
+      const confirmation = wrapper.get('[data-testid="ifood-ticket-cancel-confirmation"]')
+      expect(confirmation.text()).toContain('irreversível')
+      expect(wrapper.find('[data-testid="ifood-ticket-cancel-submit"]').exists()).toBe(true)
+    })
+
+    it('should let the merchant step back from the confirmation without cancelling', async () => {
+      const wrapper = await openCancelPanel(mountTicket(fullOrder()))
+      await wrapper.get('[data-testid="ifood-ticket-cancel-reason"]').setValue('501')
+      await wrapper.get('[data-testid="ifood-ticket-cancel-continue"]').trigger('click')
+      await nextTick()
+
+      await wrapper.get('[data-testid="ifood-ticket-cancel-back"]').trigger('click')
+      await nextTick()
+
+      expect(mockedService.cancel).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="ifood-ticket-cancel-confirmation"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="ifood-ticket-cancel-reason"]').exists()).toBe(true)
+    })
+
+    it('should cancel with the chosen code and the free-text note, and reflect the status', async () => {
+      mockedService.cancel.mockResolvedValue({
+        orderId: 'o1',
+        externalOrderId: 'ext-1',
+        status: 'CANCELLED',
+      })
+      const wrapper = await openCancelPanel(mountTicket(fullOrder()))
+      await wrapper.get('[data-testid="ifood-ticket-cancel-reason"]').setValue('502')
+      await wrapper.get('[data-testid="ifood-ticket-cancel-note"]').setValue('Faltou insumo')
+      await wrapper.get('[data-testid="ifood-ticket-cancel-continue"]').trigger('click')
+      await nextTick()
+
+      await wrapper.get('[data-testid="ifood-ticket-cancel-submit"]').trigger('click')
+      await flushPromises()
+
+      expect(mockedService.cancel).toHaveBeenCalledWith('o1', {
+        cancellationCode: '502',
+        reason: 'Faltou insumo',
+      })
+      expect(wrapper.get('[data-testid="ifood-ticket-status"]').text()).toContain('Cancelado')
+      expect(wrapper.emitted('updated')?.[0]?.[0]).toMatchObject({
+        orderId: 'o1',
+        status: 'CANCELLED',
+      })
+      expect(wrapper.get('[data-testid="ifood-ticket-success"]').text()).toContain('cancelado')
+    })
+
+    it('should stop offering actions once the order is cancelled', async () => {
+      mockedService.cancel.mockResolvedValue({
+        orderId: 'o1',
+        externalOrderId: 'ext-1',
+        status: 'CANCELLED',
+      })
+      const wrapper = await openCancelPanel(mountTicket(fullOrder()))
+      await wrapper.get('[data-testid="ifood-ticket-cancel-reason"]').setValue('501')
+      await wrapper.get('[data-testid="ifood-ticket-cancel-continue"]').trigger('click')
+      await nextTick()
+      await wrapper.get('[data-testid="ifood-ticket-cancel-submit"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="ifood-ticket-cancel"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="ifood-ticket-dispatch"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="ifood-ticket-confirm"]').exists()).toBe(false)
+    })
+
+    it('should send no note when the merchant leaves it blank', async () => {
+      mockedService.cancel.mockResolvedValue({
+        orderId: 'o1',
+        externalOrderId: 'ext-1',
+        status: 'CANCELLED',
+      })
+      const wrapper = await openCancelPanel(mountTicket(fullOrder()))
+      await wrapper.get('[data-testid="ifood-ticket-cancel-reason"]').setValue('501')
+      await wrapper.get('[data-testid="ifood-ticket-cancel-continue"]').trigger('click')
+      await nextTick()
+      await wrapper.get('[data-testid="ifood-ticket-cancel-submit"]').trigger('click')
+      await flushPromises()
+
+      expect(mockedService.cancel).toHaveBeenCalledWith('o1', {
+        cancellationCode: '501',
+        reason: '',
+      })
+    })
+
+    it('should surface the pt-BR detail when the reason list cannot be loaded', async () => {
+      mockedService.cancellationReasons.mockRejectedValue({
+        response: { status: 409, data: { detail: 'Autorização do iFood expirada.' } },
+      })
+      const wrapper = await openCancelPanel(mountTicket(fullOrder()))
+
+      expect(wrapper.get('[data-testid="ifood-ticket-error"]').text()).toContain(
+        'Autorização do iFood expirada.',
+      )
+      expect(wrapper.find('[data-testid="ifood-ticket-cancel-reason"]').exists()).toBe(false)
+    })
+
+    it('should warn instead of cancelling when iFood returns no reason', async () => {
+      mockedService.cancellationReasons.mockResolvedValue([])
+      const wrapper = await openCancelPanel(mountTicket(fullOrder()))
+
+      expect(wrapper.get('[data-testid="ifood-ticket-cancel-empty"]').text()).toContain('motivo')
+      expect(wrapper.find('[data-testid="ifood-ticket-cancel-continue"]').exists()).toBe(false)
+    })
+
+    it('should surface the pt-BR detail when iFood rejects the cancellation', async () => {
+      mockedService.cancel.mockRejectedValue({
+        response: { status: 400, data: { detail: 'iFood recusou o cancelamento do pedido.' } },
+      })
+      const wrapper = await openCancelPanel(mountTicket(fullOrder()))
+      await wrapper.get('[data-testid="ifood-ticket-cancel-reason"]').setValue('501')
+      await wrapper.get('[data-testid="ifood-ticket-cancel-continue"]').trigger('click')
+      await nextTick()
+      await wrapper.get('[data-testid="ifood-ticket-cancel-submit"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="ifood-ticket-error"]').text()).toContain(
+        'iFood recusou o cancelamento do pedido.',
+      )
+      // O status local não muda quando o iFood recusa — nada fica dessincronizado.
+      expect(wrapper.get('[data-testid="ifood-ticket-status"]').text()).toContain('Pendente')
+    })
+  })
+
+  describe('customer-initiated cancellation request', () => {
+    async function mountWithRequest(order = fullOrder()) {
+      mockedNotifications.findAll.mockResolvedValue(notificationPage([cancellationRequest()]))
+      const wrapper = mountTicket(order)
+      await flushPromises()
+      return wrapper
+    }
+
+    it('should announce a pending request found in the notification feed', async () => {
+      const wrapper = await mountWithRequest()
+
+      const panel = wrapper.get('[data-testid="ifood-ticket-cancellation-request"]')
+      expect(panel.text()).toContain('cancelamento')
+      expect(wrapper.find('[data-testid="ifood-ticket-cancellation-accept"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="ifood-ticket-cancellation-deny"]').exists()).toBe(true)
+    })
+
+    it('should ignore a request that belongs to another order', async () => {
+      mockedNotifications.findAll.mockResolvedValue(
+        notificationPage([cancellationRequest({ referenceData: 'other-order' })]),
+      )
+      const wrapper = mountTicket(fullOrder())
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="ifood-ticket-cancellation-request"]').exists()).toBe(false)
+    })
+
+    it('should ignore a request already resolved', async () => {
+      mockedNotifications.findAll.mockResolvedValue(
+        notificationPage([cancellationRequest({ status: 'RESOLVED' })]),
+      )
+      const wrapper = mountTicket(fullOrder())
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="ifood-ticket-cancellation-request"]').exists()).toBe(false)
+    })
+
+    it('should not look for requests on a non-iFood order', async () => {
+      mountTicket(bareOrder({ origin: 'MENUBANK' }))
+      await flushPromises()
+
+      expect(mockedNotifications.findAll).not.toHaveBeenCalled()
+    })
+
+    it('should still render the ticket when the notification feed fails', async () => {
+      mockedNotifications.findAll.mockRejectedValue(new Error('boom'))
+      const wrapper = mountTicket(fullOrder())
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="ifood-ticket-cancellation-request"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="ifood-ticket-display-id"]').text()).toContain('3421')
+    })
+
+    it('should confirm before accepting, then cancel the order and clear the alert', async () => {
+      mockedService.acceptCancellationRequest.mockResolvedValue({
+        orderId: 'o1',
+        externalOrderId: 'ext-1',
+        status: 'CANCELLED',
+      })
+      const wrapper = await mountWithRequest()
+
+      await wrapper.get('[data-testid="ifood-ticket-cancellation-accept"]').trigger('click')
+      await nextTick()
+      expect(mockedService.acceptCancellationRequest).not.toHaveBeenCalled()
+
+      await wrapper.get('[data-testid="ifood-ticket-cancellation-accept-confirm"]').trigger('click')
+      await flushPromises()
+
+      expect(mockedService.acceptCancellationRequest).toHaveBeenCalledWith('o1')
+      expect(wrapper.get('[data-testid="ifood-ticket-status"]').text()).toContain('Cancelado')
+      expect(wrapper.find('[data-testid="ifood-ticket-cancellation-request"]').exists()).toBe(false)
+      expect(mockedNotifications.dismiss).toHaveBeenCalledWith('n-1')
+      expect(wrapper.emitted('updated')?.[0]?.[0]).toMatchObject({
+        orderId: 'o1',
+        status: 'CANCELLED',
+      })
+    })
+
+    it('should deny the request without changing the status', async () => {
+      mockedService.denyCancellationRequest.mockResolvedValue({
+        orderId: 'o1',
+        externalOrderId: 'ext-1',
+        status: 'PENDING',
+      })
+      const wrapper = await mountWithRequest()
+
+      await wrapper.get('[data-testid="ifood-ticket-cancellation-deny"]').trigger('click')
+      await flushPromises()
+
+      expect(mockedService.denyCancellationRequest).toHaveBeenCalledWith('o1')
+      expect(wrapper.get('[data-testid="ifood-ticket-status"]').text()).toContain('Pendente')
+      expect(wrapper.find('[data-testid="ifood-ticket-cancellation-request"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="ifood-ticket-success"]').text()).toContain('recusada')
+      expect(mockedNotifications.dismiss).toHaveBeenCalledWith('n-1')
+    })
+
+    it('should surface the pt-BR detail when answering the request fails', async () => {
+      mockedService.denyCancellationRequest.mockRejectedValue({
+        response: { status: 409, data: { detail: 'Pedido já foi cancelado.' } },
+      })
+      const wrapper = await mountWithRequest()
+
+      await wrapper.get('[data-testid="ifood-ticket-cancellation-deny"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="ifood-ticket-error"]').text()).toContain(
+        'Pedido já foi cancelado.',
+      )
+      // A solicitação continua pendente: o lojista ainda precisa respondê-la.
+      expect(wrapper.find('[data-testid="ifood-ticket-cancellation-request"]').exists()).toBe(true)
+      expect(mockedNotifications.dismiss).not.toHaveBeenCalled()
+    })
+
+    it('should keep the ticket usable when dismissing the notification fails', async () => {
+      mockedService.denyCancellationRequest.mockResolvedValue({
+        orderId: 'o1',
+        externalOrderId: 'ext-1',
+        status: 'PENDING',
+      })
+      mockedNotifications.dismiss.mockRejectedValue(new Error('offline'))
+      const wrapper = await mountWithRequest()
+
+      await wrapper.get('[data-testid="ifood-ticket-cancellation-deny"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="ifood-ticket-error"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="ifood-ticket-success"]').text()).toContain('recusada')
     })
   })
 })

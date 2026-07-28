@@ -1,12 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { UI, UIBtn, UIIcon, UIModal, UIPill, brl } from '@/design'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { UI, UIBtn, UIIcon, UIModal, UIPill, UISelect, brl } from '@/design'
 import {
   ifoodOrderActionService,
   orderActionErrorMessage,
   type IfoodOrderConfirmationWindow,
 } from '@/services/ifoodOrderActionService'
-import type { OrderPaymentMethodResponse, OrderResponse, OrderStatus } from '@/types/Order'
+import { notificationService } from '@/services/notificationService'
+import type {
+  IfoodCancellationReason,
+  OrderPaymentMethodResponse,
+  OrderResponse,
+  OrderStatus,
+} from '@/types/Order'
+import { CANCELLATION_REQUESTED_TYPE, type NotificationResponse } from '@/types/Notification'
 
 const props = defineProps<{ order: OrderResponse }>()
 
@@ -51,10 +58,31 @@ const PAYMENT_METHOD_LABEL: Record<string, string> = {
 const currentStatus = ref<OrderStatus>(props.order.status)
 const confirmationWindow = ref<IfoodOrderConfirmationWindow | null>(null)
 const remainingSeconds = ref<number | null>(null)
-const runningAction = ref<'confirm' | 'ready' | 'dispatch' | null>(null)
+type ActionKey = 'confirm' | 'ready' | 'dispatch' | 'cancel' | 'accept' | 'deny'
+
+const runningAction = ref<ActionKey | null>(null)
 const doneActions = ref<string[]>([])
 const actionError = ref<string | null>(null)
 const actionSuccess = ref<string | null>(null)
+
+// --- Cancelamento iniciado pelo lojista ---------------------------------
+// Os motivos vêm do iFood (`GET /cancellationReasons`) e o lojista escolhe um deles:
+// a homologação não aceita motivo digitado à mão. A observação livre é só um
+// complemento enviado em `reason`.
+const cancelOpen = ref(false)
+const cancelStage = ref<'reason' | 'confirm'>('reason')
+const cancelReasons = ref<IfoodCancellationReason[]>([])
+const cancelReasonCode = ref('')
+const cancelNote = ref('')
+const loadingReasons = ref(false)
+const cancelPanel = ref<HTMLElement | null>(null)
+
+// --- Cancelamento pedido pelo cliente/plataforma -------------------------
+// Não há coluna `cancellation_requested_at` no pedido: o único registro da solicitação
+// é a notificação ORDER_CANCELLATION_REQUESTED, cujo `referenceData` é o id LOCAL do
+// pedido — por isso ela é consultada aqui e alimenta os botões de aceitar/recusar.
+const pendingRequest = ref<NotificationResponse | null>(null)
+const confirmingAccept = ref(false)
 
 // The countdown is anchored on `remainingSeconds` (timezone-free) rather than parsed
 // from `deadline`, which is a São Paulo local date-time and would drift on a browser
@@ -223,8 +251,31 @@ function stopTicker() {
   }
 }
 
+/**
+ * Looks for an unanswered cancellation request in the notification feed. The backend keeps
+ * no flag on the order itself, so the feed is the only source: an
+ * `ORDER_CANCELLATION_REQUESTED` notification whose `referenceData` is this order's local id
+ * and that nobody resolved yet.
+ */
+async function loadPendingCancellationRequest() {
+  try {
+    const page = await notificationService.findAll({ page: 0, size: 50 })
+    pendingRequest.value =
+      page.content.find(
+        (n) =>
+          n.type === CANCELLATION_REQUESTED_TYPE &&
+          n.referenceData === props.order.id &&
+          n.status !== 'RESOLVED',
+      ) ?? null
+  } catch {
+    // The ticket must render every homologation field even without the feed.
+    pendingRequest.value = null
+  }
+}
+
 onMounted(async () => {
   if (!actionable.value) return
+  void loadPendingCancellationRequest()
   try {
     const window = await ifoodOrderActionService.getConfirmationWindow(props.order.id)
     confirmationWindow.value = window
@@ -241,11 +292,12 @@ onMounted(async () => {
 
 onUnmounted(stopTicker)
 
+/** Runs an iFood action; returns whether it succeeded so callers can chain clean-up. */
 async function runAction(
-  key: 'confirm' | 'ready' | 'dispatch',
+  key: ActionKey,
   call: () => Promise<{ status: OrderStatus }>,
   successMessage: string,
-) {
+): Promise<boolean> {
   runningAction.value = key
   actionError.value = null
   actionSuccess.value = null
@@ -255,8 +307,10 @@ async function runAction(
     doneActions.value = [...doneActions.value, key]
     actionSuccess.value = successMessage
     emit('updated', { orderId: props.order.id, status: result.status })
+    return true
   } catch (e: unknown) {
     actionError.value = orderActionErrorMessage(e)
+    return false
   } finally {
     runningAction.value = null
   }
@@ -287,6 +341,95 @@ function dispatchOrder() {
   )
 }
 
+/** Opens the cancel flow, loading iFood's official reasons before showing the picker. */
+async function openCancelFlow() {
+  actionError.value = null
+  actionSuccess.value = null
+  cancelStage.value = 'reason'
+  cancelReasonCode.value = ''
+  cancelNote.value = ''
+  loadingReasons.value = true
+  try {
+    cancelReasons.value = await ifoodOrderActionService.cancellationReasons(props.order.id)
+    cancelOpen.value = true
+    await nextTick()
+    // jsdom has no scrollIntoView; in the browser it brings the panel into view because
+    // the button that opens it lives in the modal footer.
+    cancelPanel.value?.scrollIntoView?.({ block: 'nearest' })
+  } catch (e: unknown) {
+    cancelOpen.value = false
+    actionError.value = orderActionErrorMessage(
+      e,
+      'Não foi possível carregar os motivos de cancelamento do iFood.',
+    )
+  } finally {
+    loadingReasons.value = false
+  }
+}
+
+function closeCancelFlow() {
+  cancelOpen.value = false
+  cancelStage.value = 'reason'
+}
+
+/** Cancelling is irreversible, so the merchant always passes through a confirmation step. */
+function reviewCancellation() {
+  if (!cancelReasonCode.value) return
+  cancelStage.value = 'confirm'
+}
+
+function backToReasons() {
+  cancelStage.value = 'reason'
+}
+
+async function submitCancellation() {
+  const ok = await runAction(
+    'cancel',
+    () =>
+      ifoodOrderActionService.cancel(props.order.id, {
+        cancellationCode: cancelReasonCode.value,
+        reason: cancelNote.value,
+      }),
+    'Pedido cancelado no iFood.',
+  )
+  if (ok) closeCancelFlow()
+}
+
+/**
+ * Clears the alert once the request has been answered. The backend does not resolve the
+ * notification, so the ticket dismisses it — best effort: the iFood call already went
+ * through and a failing clean-up must not look like a failed cancellation.
+ */
+async function clearPendingRequest() {
+  const answered = pendingRequest.value
+  pendingRequest.value = null
+  confirmingAccept.value = false
+  if (!answered) return
+  try {
+    await notificationService.dismiss(answered.id)
+  } catch {
+    // The alert stays in the feed; the merchant can dismiss it from the bell.
+  }
+}
+
+async function acceptCancellationRequest() {
+  const ok = await runAction(
+    'accept',
+    () => ifoodOrderActionService.acceptCancellationRequest(props.order.id),
+    'Cancelamento aceito. O pedido foi cancelado no iFood.',
+  )
+  if (ok) await clearPendingRequest()
+}
+
+async function denyCancellationRequest() {
+  const ok = await runAction(
+    'deny',
+    () => ifoodOrderActionService.denyCancellationRequest(props.order.id),
+    'Solicitação de cancelamento recusada. O pedido segue em andamento.',
+  )
+  if (ok) await clearPendingRequest()
+}
+
 const sectionTitle = {
   fontSize: '11px',
   fontWeight: 700,
@@ -314,6 +457,26 @@ const rowStyle = {
 }
 
 const labelStyle = { color: UI.textSub, fontSize: '12px' }
+
+const fieldLabel = {
+  display: 'block',
+  fontSize: '11.5px',
+  color: UI.textSub,
+  marginBottom: '5px',
+}
+
+const panelActions = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  gap: '8px',
+  marginTop: '12px',
+}
+
+/** Description of the chosen reason, echoed back on the confirmation step. */
+const selectedReasonDescription = computed(
+  () =>
+    cancelReasons.value.find((r) => r.cancelCodeId === cancelReasonCode.value)?.description ?? '',
+)
 </script>
 
 <template>
@@ -378,6 +541,74 @@ const labelStyle = { color: UI.textSub, fontSize: '12px' }
             {{ formatDateTime(confirmationWindow.deadline) }}.
           </template>
         </div>
+      </div>
+    </div>
+
+    <!-- Solicitação de cancelamento feita pelo cliente ou pela plataforma -->
+    <div
+      v-if="pendingRequest"
+      data-testid="ifood-ticket-cancellation-request"
+      :style="{ ...block, background: UI.roseBg, borderColor: UI.roseBg }"
+    >
+      <div :style="{ display: 'flex', gap: '10px', alignItems: 'flex-start' }">
+        <UIIcon name="alert" :size="16" :style="{ color: UI.rose, flexShrink: 0, marginTop: '2px' }" />
+        <div>
+          <div :style="{ fontSize: '13px', fontWeight: 700, color: UI.rose2 }">
+            Cancelamento solicitado
+          </div>
+          <div :style="{ fontSize: '12px', color: UI.textSub, marginTop: '2px', lineHeight: 1.5 }">
+            <template v-if="confirmingAccept">
+              Ao aceitar, o pedido é cancelado no iFood e sai dos seus ganhos. A ação é
+              irreversível.
+            </template>
+            <template v-else>
+              O cliente (ou o iFood) pediu o cancelamento do pedido
+              {{ pendingRequest.referenceDisplay }} e aguarda a sua resposta.
+            </template>
+          </div>
+        </div>
+      </div>
+      <div :style="panelActions">
+        <template v-if="confirmingAccept">
+          <UIBtn
+            variant="ghost"
+            size="sm"
+            data-testid="ifood-ticket-cancellation-accept-back"
+            :disabled="runningAction !== null"
+            @click="confirmingAccept = false"
+          >
+            Voltar
+          </UIBtn>
+          <UIBtn
+            variant="danger"
+            size="sm"
+            data-testid="ifood-ticket-cancellation-accept-confirm"
+            :disabled="runningAction !== null"
+            @click="acceptCancellationRequest"
+          >
+            {{ runningAction === 'accept' ? 'Aceitando…' : 'Confirmar aceite' }}
+          </UIBtn>
+        </template>
+        <template v-else>
+          <UIBtn
+            variant="secondary"
+            size="sm"
+            data-testid="ifood-ticket-cancellation-deny"
+            :disabled="runningAction !== null"
+            @click="denyCancellationRequest"
+          >
+            {{ runningAction === 'deny' ? 'Recusando…' : 'Recusar cancelamento' }}
+          </UIBtn>
+          <UIBtn
+            variant="softDanger"
+            size="sm"
+            data-testid="ifood-ticket-cancellation-accept"
+            :disabled="runningAction !== null"
+            @click="confirmingAccept = true"
+          >
+            Aceitar cancelamento
+          </UIBtn>
+        </template>
       </div>
     </div>
 
@@ -614,6 +845,125 @@ const labelStyle = { color: UI.textSub, fontSize: '12px' }
       </span>
     </div>
 
+    <!-- Cancelamento iniciado pelo lojista: motivos oficiais do iFood + confirmação -->
+    <div
+      v-if="cancelOpen"
+      ref="cancelPanel"
+      data-testid="ifood-ticket-cancel-panel"
+      :style="{ ...block, borderColor: UI.rose, marginTop: '12px' }"
+    >
+      <div :style="sectionTitle">Cancelar pedido</div>
+
+      <template v-if="cancelStage === 'reason'">
+        <div
+          v-if="!cancelReasons.length"
+          data-testid="ifood-ticket-cancel-empty"
+          :style="{ fontSize: '12.5px', color: UI.textSub, lineHeight: 1.5 }"
+        >
+          O iFood não retornou nenhum motivo de cancelamento para este pedido. Tente novamente
+          em instantes — sem um motivo da lista oficial o cancelamento não pode ser enviado.
+        </div>
+        <template v-else>
+          <label :style="fieldLabel" for="ifood-cancel-reason">
+            Motivo do cancelamento (obrigatório, definido pelo iFood)
+          </label>
+          <UISelect
+            id="ifood-cancel-reason"
+            v-model="cancelReasonCode"
+            data-testid="ifood-ticket-cancel-reason"
+            placeholder="Selecione o motivo"
+          >
+            <option v-for="reason in cancelReasons" :key="reason.cancelCodeId" :value="reason.cancelCodeId">
+              {{ reason.description }}
+            </option>
+          </UISelect>
+
+          <label :style="{ ...fieldLabel, marginTop: '10px' }" for="ifood-cancel-note">
+            Observação para o iFood (opcional)
+          </label>
+          <textarea
+            id="ifood-cancel-note"
+            v-model="cancelNote"
+            data-testid="ifood-ticket-cancel-note"
+            rows="2"
+            placeholder="Detalhe o que aconteceu (não substitui o motivo acima)"
+            :style="{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '8px 12px',
+              background: UI.panel,
+              border: `1px solid ${UI.border}`,
+              borderRadius: '9px',
+              fontSize: '13px',
+              fontFamily: 'inherit',
+              color: UI.text,
+              resize: 'vertical',
+            }"
+          />
+
+          <div :style="panelActions">
+            <UIBtn
+              variant="ghost"
+              size="sm"
+              data-testid="ifood-ticket-cancel-dismiss"
+              @click="closeCancelFlow"
+            >
+              Voltar
+            </UIBtn>
+            <UIBtn
+              variant="danger"
+              size="sm"
+              data-testid="ifood-ticket-cancel-continue"
+              :disabled="!cancelReasonCode"
+              @click="reviewCancellation"
+            >
+              Continuar
+            </UIBtn>
+          </div>
+        </template>
+      </template>
+
+      <template v-else>
+        <div
+          data-testid="ifood-ticket-cancel-confirmation"
+          :style="{ fontSize: '12.5px', color: UI.rose2, lineHeight: 1.5 }"
+        >
+          O cancelamento é <strong>irreversível</strong>: o pedido é cancelado no iFood, o
+          cliente é avisado e o valor sai dos seus ganhos.
+        </div>
+        <div :style="{ ...rowStyle, marginTop: '8px' }">
+          <span :style="labelStyle">Motivo enviado ao iFood</span>
+          <span data-testid="ifood-ticket-cancel-chosen-reason" :style="{ fontWeight: 600 }">
+            {{ selectedReasonDescription }}
+          </span>
+        </div>
+        <div v-if="cancelNote.trim()" :style="rowStyle">
+          <span :style="labelStyle">Observação</span>
+          <span>{{ cancelNote.trim() }}</span>
+        </div>
+        <div :style="panelActions">
+          <UIBtn
+            variant="ghost"
+            size="sm"
+            data-testid="ifood-ticket-cancel-back"
+            :disabled="runningAction !== null"
+            @click="backToReasons"
+          >
+            Voltar
+          </UIBtn>
+          <UIBtn
+            variant="danger"
+            size="sm"
+            data-testid="ifood-ticket-cancel-submit"
+            :disabled="runningAction !== null"
+            @click="submitCancellation"
+          >
+            {{ runningAction === 'cancel' ? 'Cancelando…' : 'Confirmar cancelamento' }}
+          </UIBtn>
+        </div>
+      </template>
+    </div>
+
     <div
       v-if="actionSuccess"
       data-testid="ifood-ticket-success"
@@ -631,6 +981,15 @@ const labelStyle = { color: UI.textSub, fontSize: '12px' }
 
     <template #footer>
       <UIBtn variant="ghost" data-testid="ifood-ticket-close" @click="emit('close')">Fechar</UIBtn>
+      <UIBtn
+        v-if="actionable && !cancelOpen"
+        variant="softDanger"
+        data-testid="ifood-ticket-cancel"
+        :disabled="runningAction !== null || loadingReasons"
+        @click="openCancelFlow"
+      >
+        {{ loadingReasons ? 'Buscando motivos…' : 'Cancelar pedido' }}
+      </UIBtn>
       <UIBtn
         v-if="actionable"
         variant="secondary"

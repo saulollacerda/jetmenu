@@ -68,6 +68,69 @@ describe('ifoodOrderActionService', () => {
     expect(result.expired).toBe(false)
   })
 
+  describe('cancellation', () => {
+    it('cancellationReasons should GET the official iFood reason list of the order', async () => {
+      const reasons = [
+        { cancelCodeId: '501', description: 'PROBLEMAS DE SISTEMA' },
+        { cancelCodeId: '502', description: 'PEDIDO DUPLICADO' },
+      ]
+      vi.mocked(api.get).mockResolvedValue({ data: reasons })
+
+      const result = await ifoodOrderActionService.cancellationReasons('o1')
+
+      expect(api.get).toHaveBeenCalledWith('/integrations/ifood/orders/o1/cancellation-reasons')
+      expect(result).toHaveLength(2)
+      expect(result[0]).toEqual({ cancelCodeId: '501', description: 'PROBLEMAS DE SISTEMA' })
+    })
+
+    it('cancel should POST the chosen cancellation code and the optional note', async () => {
+      vi.mocked(api.post).mockResolvedValue({ data: { ...ACTION_RESULT, status: 'CANCELLED' } })
+
+      const result = await ifoodOrderActionService.cancel('o1', {
+        cancellationCode: '501',
+        reason: 'Faltou insumo',
+      })
+
+      expect(api.post).toHaveBeenCalledWith('/integrations/ifood/orders/o1/cancel', {
+        cancellationCode: '501',
+        reason: 'Faltou insumo',
+      })
+      expect(result.status).toBe('CANCELLED')
+    })
+
+    it('cancel should omit a blank note instead of sending an empty reason', async () => {
+      vi.mocked(api.post).mockResolvedValue({ data: { ...ACTION_RESULT, status: 'CANCELLED' } })
+
+      await ifoodOrderActionService.cancel('o1', { cancellationCode: '501', reason: '   ' })
+
+      expect(api.post).toHaveBeenCalledWith('/integrations/ifood/orders/o1/cancel', {
+        cancellationCode: '501',
+      })
+    })
+
+    it('acceptCancellationRequest should POST the accept endpoint without a body', async () => {
+      vi.mocked(api.post).mockResolvedValue({ data: { ...ACTION_RESULT, status: 'CANCELLED' } })
+
+      const result = await ifoodOrderActionService.acceptCancellationRequest('o1')
+
+      expect(api.post).toHaveBeenCalledWith(
+        '/integrations/ifood/orders/o1/cancellation-request/accept',
+      )
+      expect(result.status).toBe('CANCELLED')
+    })
+
+    it('denyCancellationRequest should POST the deny endpoint and keep the status', async () => {
+      vi.mocked(api.post).mockResolvedValue({ data: ACTION_RESULT })
+
+      const result = await ifoodOrderActionService.denyCancellationRequest('o1')
+
+      expect(api.post).toHaveBeenCalledWith(
+        '/integrations/ifood/orders/o1/cancellation-request/deny',
+      )
+      expect(result.status).toBe('PENDING')
+    })
+  })
+
   describe('orderActionErrorMessage', () => {
     it('should surface the pt-BR ProblemDetail message returned by the backend', () => {
       const err = { response: { status: 409, data: { detail: 'Pedido já foi cancelado.' } } }
