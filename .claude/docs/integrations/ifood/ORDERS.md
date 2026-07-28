@@ -168,18 +168,69 @@ o pedido depois.
 | `deliveryFee` | double | Taxa de entrega → `Order.deliveryFee` |
 | `orderAmount` | double | Total do pedido (`subTotal + deliveryFee + additionalFees - benefits`) → `Order.totalValue` |
 
-### Campos fora do escopo v1
+### `payments`
 
-`benefits`, `additionalFees`, `payments`, `delivery`/`deliveryAddress`, `takeout`, `dineIn`, `picking` —
-presentes na resposta da API, mas **não persistidos** nesta entrega (a entidade `Order` atual não tem
-campos para cupons, breakdown de pagamento ou endereço). Revisitar se algum dashboard precisar desses
-dados no futuro.
+Exigido pela homologação do módulo Order (bandeira do cartão e troco).
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `prepaid` | double | Valor já pago online → `Order.paymentPrepaidAmount` |
+| `pending` | double | Valor a receber na entrega → `Order.paymentPendingAmount` |
+| `methods[].value` | double | Valor deste meio de pagamento |
+| `methods[].currency` | string | Moeda (`BRL`) |
+| `methods[].method` | string | `CREDIT`, `DEBIT`, `CASH`, `MEAL_VOUCHER`, `PIX`, ... |
+| `methods[].type` | string | `ONLINE` (já pago) ou `OFFLINE` (recebido pela loja) |
+| `methods[].card.brand` | string | Bandeira do cartão — **exibida na comanda** |
+| `methods[].cash.changeFor` | double | Nota que o cliente vai entregar; o troco é `changeFor − value`, calculado no backend e exposto como `changeAmount` |
+
+Um pedido pode ter **mais de um meio de pagamento**, por isso cada um vira uma linha em
+`order_payment_methods` (child table de `orders`), não colunas em `orders`.
+
+### `benefits[]`
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `value` | double | Valor do cupom/desconto |
+| `target` | string | `CART`, `DELIVERY_FEE`, `ITEM`, ... |
+| `sponsorshipValues[].name` | string | `IFOOD` ou `MERCHANT` — **quem banca o desconto** |
+| `sponsorshipValues[].value` | double | Parcela bancada por esse patrocinador |
+
+Vários benefícios são **somados** em `Order.discountTotal`, e o rateio em
+`Order.discountIfoodValue` / `Order.discountMerchantValue`. Patrocinador desconhecido entra no total
+mas não no rateio (fica logado). **Nada disso é deduzido de nenhum valor** — o desconto já está
+embutido no `total.orderAmount` e é gravado apenas para exibição.
+
+### `delivery` / `takeout`
+
+| Campo | Destino |
+|---|---|
+| `delivery.mode` | `Order.deliveryMode` |
+| `delivery.deliveredBy` | `Order.deliveredBy` (`IFOOD` ou `MERCHANT`) |
+| `delivery.deliveryDateTime` | `Order.deliveryDateTime` (UTC → `America/Sao_Paulo`) |
+| `delivery.observations` | `Order.deliveryObservations` — observações de entrega na comanda |
+| `delivery.pickupCode` | `Order.pickupCode` — código de coleta |
+| `takeout.mode` | `Order.takeoutMode` |
+| `takeout.takeoutDateTime` | `Order.takeoutDateTime` (UTC → `America/Sao_Paulo`) |
+
+`delivery.deliveryAddress` **não é persistido** — MenuBank não guarda endereço.
+
+### Campos fora do escopo
+
+`additionalFees`, `deliveryAddress`, `dineIn` (parseado, não persistido) e `picking` — presentes na
+resposta da API, mas não persistidos. Revisitar se algum dashboard precisar desses dados no futuro.
 
 ## Mapeamento → `Order`/`OrderItem`/`OrderItemExtraIngredient`
 
 | Campo iFood | Destino MenuBank |
 |---|---|
 | `id` | `Order.externalOrderId` |
+| `displayId` | `Order.displayId` |
+| `orderType` / `orderTiming` | `Order.orderType` / `Order.orderTiming` (valor desconhecido → `null`) |
+| `customer.documentNumber` | `Order.customerDocument` (CPF/CNPJ da NF-e) |
+| `items[].observations` | `OrderItem.observations` |
+| `payments` | `Order.paymentPrepaidAmount`/`paymentPendingAmount` + `OrderPaymentMethod` (1:N) |
+| `benefits[]` | `Order.discountTotal`/`discountIfoodValue`/`discountMerchantValue` |
+| `delivery` / `takeout` | Colunas descritivas em `Order` (ver acima) |
 | `createdAt` (UTC) | `Order.dateTime` — parse `OffsetDateTime` → converte para `America/Sao_Paulo` → `LocalDateTime` |
 | `customer.id` (1º) ou `customer.phone.number` não-0800 (2º) | Resolução de `Customer` — `customer.id` → `customers.external_id` |
 | `items[].externalCode` ou `items[].name` | Resolução de `Product` — `externalCode` primeiro, nome canônico como fallback |
