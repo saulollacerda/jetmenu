@@ -83,7 +83,7 @@ class CategoryServiceTest {
 
         @Test
         @DisplayName("deve criar categoria com origin JETMENU e expor origin na resposta")
-        void shouldCreateCategoryWithMenubankOrigin() {
+        void shouldCreateCategoryWithJetmenuOrigin() {
             given(categoryRepository.existsByNameAndMerchantId(categoryRequest.getName(), merchantId)).willReturn(false);
             given(categoryRepository.save(any(Category.class))).willAnswer(inv -> inv.getArgument(0));
 

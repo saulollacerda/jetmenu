@@ -203,7 +203,7 @@ class OrderServiceTest {
 
         @Test
         @DisplayName("deve usar JETMENU como canal padrão quando origin não é informado")
-        void shouldDefaultOriginToMenubank() {
+        void shouldDefaultOriginToJetmenu() {
             given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
             given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
             given(orderRepository.save(any(Order.class))).willReturn(order);

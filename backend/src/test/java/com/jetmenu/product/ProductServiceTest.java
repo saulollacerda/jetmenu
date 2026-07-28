@@ -98,7 +98,7 @@ class ProductServiceTest {
 
         @Test
         @DisplayName("deve criar produto com origin JETMENU e expor origin na resposta")
-        void shouldCreateProductWithMenubankOrigin() {
+        void shouldCreateProductWithJetmenuOrigin() {
             given(productRepository.existsByNameAndMerchantId(anyString(), eq(merchantId))).willReturn(false);
             given(categoryRepository.findByIdAndMerchantId(categoryId, merchantId)).willReturn(Optional.of(category));
             given(productRepository.save(any(Product.class))).willAnswer(inv -> inv.getArgument(0));
