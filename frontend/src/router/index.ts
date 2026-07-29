@@ -39,14 +39,11 @@ const router = createRouter({
       meta: { public: true, allowAuthenticated: true },
     },
     {
+      // The landing page lives in its own project at jetmenu.com.br. This app is
+      // served from app.jetmenu.com.br, so its root belongs to the product: the
+      // guard sends anonymous visitors to /login from here.
       path: '/',
-      redirect: '/home',
-    },
-    {
-      path: '/home',
-      name: 'landing',
-      component: () => import('@/views/LandingView.vue'),
-      meta: { public: true, allowAuthenticated: true },
+      redirect: '/dashboard',
     },
     {
       path: '/planos',

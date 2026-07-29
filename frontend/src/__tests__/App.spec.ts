@@ -34,8 +34,8 @@ const router = createRouter({
       meta: { public: true, allowAuthenticated: true },
     },
     {
-      path: '/landing',
-      component: { template: '<div>Landing</div>' },
+      path: '/planos',
+      component: { template: '<div>Planos</div>' },
       meta: { public: true, allowAuthenticated: true },
     },
     { path: '/orders', component: { template: '<div>Orders</div>' } },
@@ -130,9 +130,9 @@ describe('App', () => {
     expect(wrapper.find('aside').exists()).toBe(false)
   })
 
-  it('does not render sidebar on landing even when authenticated', async () => {
+  it('does not render sidebar on plans even when authenticated', async () => {
     authState.authenticated = true
-    router.push('/landing')
+    router.push('/planos')
     await router.isReady()
 
     const wrapper = mount(App, {

@@ -121,3 +121,35 @@ describe('PlansView — assinar', () => {
     expect(pushMock).toHaveBeenCalledWith('/register')
   })
 })
+
+/**
+ * The landing page moved to its own domain (jetmenu.com.br), while this app is
+ * served from app.jetmenu.com.br. The header links out to it, so they must be
+ * real anchors with an absolute URL — a RouterLink would look for a route that
+ * no longer exists in this app.
+ */
+describe('PlansView — links para a landing page externa', () => {
+  const LANDING_URL = 'https://jetmenu.com.br'
+
+  it('o wordmark aponta para a landing page externa', async () => {
+    mockedBilling.listPlans.mockResolvedValue([PLAN])
+
+    const wrapper = mount(PlansView, GLOBAL)
+    await flushPromises()
+
+    const link = wrapper.find('[data-testid="landing-wordmark-link"]')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toBe(LANDING_URL)
+  })
+
+  it('"Voltar ao início" aponta para a landing page externa', async () => {
+    mockedBilling.listPlans.mockResolvedValue([PLAN])
+
+    const wrapper = mount(PlansView, GLOBAL)
+    await flushPromises()
+
+    const link = wrapper.find('[data-testid="landing-back-link"]')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toBe(LANDING_URL)
+  })
+})
