@@ -4,7 +4,7 @@
     <!-- NAV -->
     <header class="lp-nav">
       <div class="lp-nav-inner">
-        <div class="lp-wordmark">menu<span>bank</span></div>
+        <div class="lp-wordmark">jet<span>menu</span></div>
         <nav>
           <ul class="lp-nav-links">
             <li><a href="#features">Funcionalidades</a></li>
@@ -36,7 +36,7 @@
           Quanto sua loja ganha<br><span class="lp-accent"> de verdade</span> em cada pedido?
         </h1>
         <p class="lp-hero-sub">
-          MenuBank calcula o custo por ingrediente, importa seus pedidos do Anota.AI / iFood
+          JetMenu calcula o custo por ingrediente, importa seus pedidos do Anota.AI / iFood
           e mostra a <strong style="color:#0f172a">margem real</strong> de cada venda — em tempo real, sem planilha.
         </p>
 
@@ -84,13 +84,13 @@
               <span class="lp-browser-dot" style="background:#ff6058"></span>
               <span class="lp-browser-dot" style="background:#ffbd2e"></span>
               <span class="lp-browser-dot" style="background:#27c940"></span>
-              <span class="lp-browser-url">menubank.app · Goat Açaí · Dashboard</span>
+              <span class="lp-browser-url">jetmenu.app · Goat Açaí · Dashboard</span>
             </div>
             <!-- Mini dashboard -->
             <div class="lp-mini-dash">
               <aside class="lp-mini-sidebar">
                 <div class="lp-mini-logo">
-                  <div class="lp-wordmark" style="font-size:14px;">menu<span>bank</span></div>
+                  <div class="lp-wordmark" style="font-size:14px;">jet<span>menu</span></div>
                   <div style="font-size:7px;color:#64748b;margin-top:2px;letter-spacing:.2px;">gestão · custo · lucro</div>
                 </div>
                 <nav class="lp-mini-nav">
@@ -270,7 +270,7 @@
           <h2 class="lp-section-h2">
             Três passos. <span style="color:#059669">Quatro minutos.</span>
           </h2>
-          <p class="lp-section-sub">Você só precisa configurar uma vez. Depois disso, o menubank trabalha sozinho.</p>
+          <p class="lp-section-sub">Você só precisa configurar uma vez. Depois disso, o jetmenu trabalha sozinho.</p>
         </div>
 
         <div class="lp-how-steps">
@@ -486,7 +486,7 @@
       <div class="lp-footer-inner">
         <div class="lp-footer-grid">
           <div>
-            <div class="lp-wordmark">menu<span>bank</span></div>
+            <div class="lp-wordmark">jet<span>menu</span></div>
             <p class="lp-footer-tagline">Sistema de gestão para lojas de delivery. Calcule margem real, custo por ingrediente e lucro estimado em cada pedido.</p>
           </div>
           <div v-for="col in footerCols" :key="col.t">
@@ -497,7 +497,7 @@
           </div>
         </div>
         <div class="lp-footer-bottom">
-          <div class="lp-footer-copy">© 2026 menubank · CNPJ 67.595.605/0001-43 · Brasil</div>
+          <div class="lp-footer-copy">© 2026 jetmenu · CNPJ 67.595.605/0001-43 · Brasil</div>
           <div class="lp-footer-copy">Feito para lojas que pensam em lucro, não só em volume.</div>
         </div>
       </div>
@@ -613,7 +613,7 @@ const features = [
   { icon: IconCalc,   iconBg: 'rgba(5,150,105,.1)',  iconColor: '#059669', title: 'Custo por ingrediente automático', body: 'Informe valor e quantidade da compra — o custo por unidade é calculado e gravado em cada ficha técnica.' },
   { icon: IconLayers, iconBg: 'rgba(37,99,235,.1)',   iconColor: '#2563eb', title: 'Ficha técnica detalhada', body: 'Ingredientes + embalagens + extras. Cada item entra com sua qtd. e custo, e a margem do produto sai pronta.' },
   { icon: IconSync,   iconBg: 'rgba(245,158,11,.1)',  iconColor: '#f59e0b', title: 'Importação Anota.AI / iFood', body: 'Pedidos chegam automaticamente com cliente, status e canal — sem digitação, sem planilha intermediária.' },
-  { icon: IconBell,   iconBg: 'rgba(225,29,72,.1)',   iconColor: '#e11d48', title: 'Alertas de ingrediente ausente', body: 'Apareceu um item novo no pedido que não está cadastrado? O menubank te avisa antes de fechar o dia.' },
+  { icon: IconBell,   iconBg: 'rgba(225,29,72,.1)',   iconColor: '#e11d48', title: 'Alertas de ingrediente ausente', body: 'Apareceu um item novo no pedido que não está cadastrado? O jetmenu te avisa antes de fechar o dia.' },
   { icon: IconChart,  iconBg: 'rgba(5,150,105,.1)',   iconColor: '#059669', title: 'Dashboard com lucro real', body: 'Faturamento, ticket médio, margem, peak hours, top produtos. Tudo num lugar, atualizado em tempo real.' },
   { icon: IconStar,   iconBg: 'rgba(37,99,235,.1)',   iconColor: '#2563eb', title: 'Multi-canal e multi-loja', body: 'Compare a performance entre canais e entre lojas da mesma rede. Veja qual ponto gera mais lucro, não só mais venda.' },
 ]
@@ -630,8 +630,8 @@ const plans = [
 const faqItems = [
   { q: 'Funciona com qual plataforma de delivery?', a: 'Anota.AI tem integração nativa (sincronização automática). iFood e Aiqfome funcionam por importação de planilha (CSV) ou copy/paste estruturado. Estamos adicionando novos canais todo mês.' },
   { q: 'Preciso refazer meu cardápio do zero?', a: 'Não. Você pode importar o cardápio do Anota.AI direto, e cadastrar fichas técnicas só para os produtos que quiser monitorar custo. O dashboard funciona desde o primeiro produto.' },
-  { q: 'E se eu não souber o custo dos meus ingredientes hoje?', a: 'Você cadastra os ingredientes com base na sua última compra (valor pago + quantidade). O menubank calcula o custo por unidade automaticamente. Não precisa de calculadora.' },
-  { q: 'Quanto custa o menubank?', a: 'Plano único e transparente, sem fidelidade. Veja os valores atualizados e assine na página de planos.' },
+  { q: 'E se eu não souber o custo dos meus ingredientes hoje?', a: 'Você cadastra os ingredientes com base na sua última compra (valor pago + quantidade). O jetmenu calcula o custo por unidade automaticamente. Não precisa de calculadora.' },
+  { q: 'Quanto custa o jetmenu?', a: 'Plano único e transparente, sem fidelidade. Veja os valores atualizados e assine na página de planos.' },
   { q: 'Posso cancelar quando quiser?', a: 'Sim, sem multa e sem fidelidade. Você cancela direto pelo painel e o acesso continua até o fim do mês contratado.' },
   { q: 'Como vocês cuidam dos meus dados?', a: 'Tudo criptografado em trânsito e em repouso. Você é dono dos seus dados — pode exportar tudo em CSV a qualquer momento, e a exclusão da conta apaga o conteúdo em até 30 dias.' },
 ]

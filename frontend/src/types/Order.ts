@@ -1,7 +1,7 @@
 import type { OrderFichaIngredientResponse } from './OrderFicha'
 
 export type OrderStatus = 'PENDING' | 'READY' | 'DELIVERED' | 'PAID' | 'CANCELLED' | 'TEST'
-export type OrderOrigin = 'MENUBANK' | 'ANOTA_AI' | 'IFOOD'
+export type OrderOrigin = 'JETMENU' | 'ANOTA_AI' | 'IFOOD'
 
 /**
  * Modalidade do pedido no iFood. Null para pedidos manuais, importados antes desta

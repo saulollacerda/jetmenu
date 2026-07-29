@@ -61,7 +61,7 @@ describe('App', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('MenuBank')
+    expect(wrapper.text()).toContain('JetMenu')
     expect(wrapper.text()).toContain('Dashboard')
     expect(wrapper.text()).toContain('Pedidos')
     expect(wrapper.text()).toContain('Produtos')

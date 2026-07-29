@@ -22,8 +22,8 @@ const title = computed(() =>
 )
 const body = computed(() =>
   isPending.value
-    ? 'O MenuBank exige um plano ativo para ser utilizado. Escolha um plano e conclua o pagamento para liberar o acesso.'
-    : 'Para continuar usando o MenuBank, renove sua assinatura. Seus dados continuam salvos e voltam a ficar disponíveis assim que o pagamento for confirmado.',
+    ? 'O JetMenu exige um plano ativo para ser utilizado. Escolha um plano e conclua o pagamento para liberar o acesso.'
+    : 'Para continuar usando o JetMenu, renove sua assinatura. Seus dados continuam salvos e voltam a ficar disponíveis assim que o pagamento for confirmado.',
 )
 const buttonLabel = computed(() => (isPending.value ? 'Escolher plano' : 'Renovar assinatura'))
 

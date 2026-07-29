@@ -68,7 +68,7 @@ describe('LandingView — estatísticas', () => {
     const wrapper = mount(LandingView, GLOBAL)
 
     expect(wrapper.text()).not.toContain('350')
-    expect(wrapper.text()).not.toContain('lojas usam o menubank')
+    expect(wrapper.text()).not.toContain('lojas usam o jetmenu')
   })
 })
 

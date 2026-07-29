@@ -445,7 +445,7 @@ describe('IfoodOrderTicketModal', () => {
     })
 
     it('should not fetch the confirmation window for a non-iFood order', async () => {
-      mountTicket(bareOrder({ origin: 'MENUBANK' }))
+      mountTicket(bareOrder({ origin: 'JETMENU' }))
       await flushPromises()
 
       expect(mockedService.getConfirmationWindow).not.toHaveBeenCalled()
@@ -506,7 +506,7 @@ describe('IfoodOrderTicketModal', () => {
     })
 
     it('should offer no action for a non-iFood order', async () => {
-      const wrapper = mountTicket(bareOrder({ origin: 'MENUBANK', orderType: 'DELIVERY' }))
+      const wrapper = mountTicket(bareOrder({ origin: 'JETMENU', orderType: 'DELIVERY' }))
       await flushPromises()
 
       expect(wrapper.find('[data-testid="ifood-ticket-dispatch"]').exists()).toBe(false)
@@ -628,7 +628,7 @@ describe('IfoodOrderTicketModal', () => {
     }
 
     it('should not offer cancellation for a non-iFood order', async () => {
-      const wrapper = mountTicket(bareOrder({ origin: 'MENUBANK' }))
+      const wrapper = mountTicket(bareOrder({ origin: 'JETMENU' }))
       await flushPromises()
 
       expect(wrapper.find('[data-testid="ifood-ticket-cancel"]').exists()).toBe(false)
@@ -845,7 +845,7 @@ describe('IfoodOrderTicketModal', () => {
     })
 
     it('should not look for requests on a non-iFood order', async () => {
-      mountTicket(bareOrder({ origin: 'MENUBANK' }))
+      mountTicket(bareOrder({ origin: 'JETMENU' }))
       await flushPromises()
 
       expect(mockedNotifications.findAll).not.toHaveBeenCalled()

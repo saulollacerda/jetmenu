@@ -513,7 +513,7 @@ const tableMinWidth = '864px'
         icon="leaf"
         accent="emerald"
         title="Cadastre seus ingredientes"
-        body="Defina valor da compra e quantidade — o MenuBank calcula o custo por unidade automaticamente e usa nas fichas técnicas dos produtos."
+        body="Defina valor da compra e quantidade — o JetMenu calcula o custo por unidade automaticamente e usa nas fichas técnicas dos produtos."
         primary="Adicionar ingrediente"
         @primary="openCreate()"
       />

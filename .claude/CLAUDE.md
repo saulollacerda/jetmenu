@@ -1,4 +1,4 @@
-# MenuBank
+# JetMenu
 
 Financial management system for delivery restaurants.
 Monorepo: Java Spring Boot backend + Vue 3 frontend.

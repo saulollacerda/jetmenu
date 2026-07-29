@@ -11,7 +11,7 @@ export interface PendingIfoodAuth {
   expiresAt: number
 }
 
-export const IFOOD_PENDING_KEY = 'menubank.ifood.pendingAuth'
+export const IFOOD_PENDING_KEY = 'jetmenu.ifood.pendingAuth'
 
 export function readPendingIfoodAuth(): PendingIfoodAuth | null {
   const raw = sessionStorage.getItem(IFOOD_PENDING_KEY)

@@ -222,7 +222,7 @@ describe('OrdersView', () => {
 
     expect(orderStoreMock.create).toHaveBeenCalledWith({
       customerId: 'c1',
-      origin: 'MENUBANK',
+      origin: 'JETMENU',
       items: [
         {
           productId: 'p1',
@@ -1492,7 +1492,7 @@ describe('OrdersView', () => {
             },
           ],
           items: [],
-          origin: 'MENUBANK',
+          origin: 'JETMENU',
         },
       ]
 
@@ -1639,7 +1639,7 @@ describe('OrdersView', () => {
     })
 
     it('should not offer the ticket for a non-iFood order', () => {
-      orderStoreMock.items = [ifoodOrder({ origin: 'MENUBANK' })]
+      orderStoreMock.items = [ifoodOrder({ origin: 'JETMENU' })]
       const wrapper = mount(OrdersView)
 
       expect(wrapper.find('[data-testid="order-o1-ticket-button"]').exists()).toBe(false)

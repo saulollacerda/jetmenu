@@ -1,4 +1,4 @@
-# MenuBank
+# JetMenu
 
 A financial management system for delivery restaurants — built as a monorepo with a **Java Spring Boot** backend and a **Vue 3** frontend.
 
@@ -57,9 +57,9 @@ npm run dev
 ## Project Structure
 
 ```
-MenuBank/
+JetMenu/
 ├── backend/          # Spring Boot API
-│   ├── src/main/java/com/MenuBank/MenuBank/
+│   ├── src/main/java/com/jetmenu/
 │   │   ├── order/        # Orders domain
 │   │   ├── product/      # Products domain
 │   │   ├── category/     # Categories domain
@@ -138,7 +138,7 @@ Ingredient 1 ── N RecipeItem
 
 ### Anota.AI
 
-MenuBank imports orders and syncs the product catalog from **Anota.AI** (which also relays iFood orders). Authentication uses a per-merchant partner token via `Authorization: Bearer <token>`.
+JetMenu imports orders and syncs the product catalog from **Anota.AI** (which also relays iFood orders). Authentication uses a per-merchant partner token via `Authorization: Bearer <token>`.
 
 | Purpose        | Base URL                                      |
 | -------------- | --------------------------------------------- |
@@ -152,7 +152,7 @@ MenuBank imports orders and syncs the product catalog from **Anota.AI** (which a
 | Aspect          | iFood (`ifood-marketplace`)                    | Anota.AI (`menu-share-adm`)                  |
 | --------------- | ---------------------------------------------- | -------------------------------------------- |
 | `total`         | `items + delivery − discounts + fees`          | `item.total` (already includes subItems)     |
-| `internalId`    | empty — extras resolved by canonical name match | MenuBank product ID                          |
+| `internalId`    | empty — extras resolved by canonical name match | JetMenu product ID                          |
 | Fees/discounts  | service fees + iFood promos                    | empty arrays                                  |
 
 See [.claude/docs/integrations/ANOTA_AI.md](.claude/docs/integrations/ANOTA_AI.md) for the full field reference, payload examples, and catalog export details.

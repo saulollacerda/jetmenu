@@ -1,7 +1,7 @@
 # Billing Provider Integration
 
 **Status: no payment provider is integrated.** AbacatePay was removed; the next provider
-plugs into the seam described here. MenuBank's own billing domain — plans, subscriptions,
+plugs into the seam described here. JetMenu's own billing domain — plans, subscriptions,
 invoices and the activation rules — was left untouched and is ready to be reused on day one.
 
 While no provider exists, `POST /api/subscription/checkout` answers **HTTP 503** with a
@@ -12,7 +12,7 @@ notice instead of a checkout button.
 
 ## The seam
 
-Everything lives in `backend/src/main/java/com/MenuBank/MenuBank/billing/`.
+Everything lives in `backend/src/main/java/com/jetmenu/billing/`.
 
 ### 1. `BillingProvider` — the interface to implement
 
@@ -52,8 +52,8 @@ When the new provider ships, either delete this class or annotate the new implem
 
 ### 3. `SubscriptionActivationService` — where activation happens
 
-This is MenuBank domain logic, not provider code. It survived the AbacatePay removal
-verbatim; only its signature was translated into MenuBank's own terms.
+This is JetMenu domain logic, not provider code. It survived the AbacatePay removal
+verbatim; only its signature was translated into JetMenu's own terms.
 
 ```java
 @Transactional

@@ -1,4 +1,4 @@
-# Backend — MenuBank
+# Backend — JetMenu
 
 ## Tech Stack
 
