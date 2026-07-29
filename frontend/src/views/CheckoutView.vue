@@ -45,7 +45,7 @@ async function startCheckout() {
     const plan = slug ? plans.find((p) => slugify(p.name) === slug) : plans[0]
     if (!plan) {
       errorMessage.value =
-        'Plano não encontrado. Volte à página de planos e escolha um plano novamente.'
+        'Plano não encontrado. Volte a jetmenu.com.br e escolha um plano novamente.'
       return
     }
     const { url } = await billingService.createCheckout(plan.id)
