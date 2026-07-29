@@ -34,8 +34,8 @@ const router = createRouter({
       meta: { public: true, allowAuthenticated: true },
     },
     {
-      path: '/planos',
-      component: { template: '<div>Planos</div>' },
+      path: '/checkout',
+      component: { template: '<div>Checkout</div>' },
       meta: { public: true, allowAuthenticated: true },
     },
     { path: '/orders', component: { template: '<div>Orders</div>' } },
@@ -130,9 +130,9 @@ describe('App', () => {
     expect(wrapper.find('aside').exists()).toBe(false)
   })
 
-  it('does not render sidebar on plans even when authenticated', async () => {
+  it('does not render sidebar on checkout even when authenticated', async () => {
     authState.authenticated = true
-    router.push('/planos')
+    router.push('/checkout')
     await router.isReady()
 
     const wrapper = mount(App, {

@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount, enableAutoUnmount, RouterLinkStub } from '@vue/test-utils'
+import { mount, flushPromises, enableAutoUnmount, RouterLinkStub } from '@vue/test-utils'
 import LoginView from '@/views/LoginView.vue'
 
+const routeState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+const pushMock = vi.hoisted(() => vi.fn())
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRoute: () => routeState,
+  useRouter: () => ({ push: pushMock }),
 }))
 
 const authState = {
@@ -22,7 +25,16 @@ beforeEach(() => {
   vi.clearAllMocks()
   authState.error = null
   authState.loading = false
+  routeState.query = {}
 })
+
+async function submit(wrapper: ReturnType<typeof mount>) {
+  const inputs = wrapper.findAll('input')
+  await inputs[0]!.setValue('a@b.com')
+  await inputs[1]!.setValue('senha123')
+  await wrapper.find('form').trigger('submit')
+  await flushPromises()
+}
 
 describe('LoginView', () => {
   it('"Esqueceu a senha?" é um link para /esqueci-senha', () => {
@@ -38,5 +50,22 @@ describe('LoginView', () => {
     const wrapper = mount(LoginView, GLOBAL)
 
     expect(wrapper.text()).not.toContain('Manter conectado')
+  })
+
+  it('vai para o dashboard após entrar', async () => {
+    const wrapper = mount(LoginView, GLOBAL)
+
+    await submit(wrapper)
+
+    expect(pushMock).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it('retoma o checkout quando o login carrega um plano vindo da landing page', async () => {
+    routeState.query = { plan: 'basico' }
+    const wrapper = mount(LoginView, GLOBAL)
+
+    await submit(wrapper)
+
+    expect(pushMock).toHaveBeenCalledWith({ path: '/checkout', query: { plan: 'basico' } })
   })
 })

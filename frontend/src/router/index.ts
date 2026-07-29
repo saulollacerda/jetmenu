@@ -46,9 +46,12 @@ const router = createRouter({
       redirect: '/dashboard',
     },
     {
-      path: '/planos',
-      name: 'plans',
-      component: () => import('@/views/PlansView.vue'),
+      // Pricing lives only on the landing page; its CTA links here with the chosen
+      // plan. Public so an anonymous visitor reaches it and is sent to register, and
+      // allowAuthenticated so a logged-in merchant goes straight to payment.
+      path: '/checkout',
+      name: 'checkout',
+      component: () => import('@/views/CheckoutView.vue'),
       meta: { public: true, allowAuthenticated: true },
     },
     {

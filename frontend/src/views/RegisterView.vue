@@ -1,10 +1,23 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import type { UserRequest } from '@/types/User'
 import { UI, UIField, UIInput, UIIcon } from '@/design'
 
+const route = useRoute()
+const router = useRouter()
 const authStore = useAuthStore()
+
+// Set when the visitor arrived from the landing page pricing CTA. It has to survive
+// the whole sign-up so checkout can resume once the account exists.
+const planSlug = computed(() => {
+  const plan = route.query.plan
+  return typeof plan === 'string' && plan ? plan : null
+})
+const loginLink = computed(() =>
+  planSlug.value ? { path: '/login', query: { plan: planSlug.value } } : { path: '/login' },
+)
 
 const validationError = ref<string | null>(null)
 const accepted = ref(false)
@@ -57,7 +70,11 @@ async function handleSubmit() {
   try {
     await authStore.register(form.value)
     // Email confirmation is required: stay here and show the confirmation notice
-    // (authStore.awaitingEmailConfirmation becomes true).
+    // (authStore.awaitingEmailConfirmation becomes true). When it is off the account
+    // already has a session, so a pending checkout can resume right away.
+    if (!authStore.awaitingEmailConfirmation && planSlug.value) {
+      router.push({ path: '/checkout', query: { plan: planSlug.value } })
+    }
   } catch {
     // store has error
   }
@@ -245,7 +262,7 @@ async function handleSubmit() {
         >
           <strong>Quase lá!</strong> Enviamos um email de confirmação para
           <strong>{{ form.email }}</strong>. Confirme seu email e depois
-          <RouterLink to="/login" :style="{ color: UI.blue, fontWeight: 600 }">faça login</RouterLink>
+          <RouterLink :to="loginLink" :style="{ color: UI.blue, fontWeight: 600 }">faça login</RouterLink>
           para concluir o cadastro.
         </div>
 
@@ -362,7 +379,7 @@ async function handleSubmit() {
         >
           Já tem uma conta?
           <RouterLink
-            to="/login"
+            :to="loginLink"
             :style="{ color: UI.blue, fontWeight: 600, textDecoration: 'none' }"
           >
             Faça login

@@ -1,6 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount, enableAutoUnmount, RouterLinkStub, type VueWrapper } from '@vue/test-utils'
+import {
+  mount,
+  flushPromises,
+  enableAutoUnmount,
+  RouterLinkStub,
+  type VueWrapper,
+} from '@vue/test-utils'
 import RegisterView from '@/views/RegisterView.vue'
+
+const routeState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+const pushMock = vi.hoisted(() => vi.fn())
+vi.mock('vue-router', () => ({
+  useRoute: () => routeState,
+  useRouter: () => ({ push: pushMock }),
+}))
 
 const registerFn = vi.fn()
 const authState = {
@@ -49,6 +62,7 @@ beforeEach(() => {
   authState.error = null
   authState.loading = false
   authState.awaitingEmailConfirmation = false
+  routeState.query = {}
 })
 
 describe('RegisterView', () => {
@@ -119,6 +133,45 @@ describe('RegisterView', () => {
     const wrapper = mountView()
 
     expect(wrapper.text()).toContain('email de confirmação')
+  })
+
+  it('retoma o checkout quando a conta já nasce com sessão e há um plano na query', async () => {
+    routeState.query = { plan: 'basico' }
+    registerFn.mockResolvedValue(undefined)
+    const wrapper = mountView()
+    await acceptTerms(wrapper)
+    await fillForm(wrapper)
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(pushMock).toHaveBeenCalledWith({ path: '/checkout', query: { plan: 'basico' } })
+  })
+
+  it('não redireciona quando o cadastro ainda aguarda confirmação de email', async () => {
+    routeState.query = { plan: 'basico' }
+    registerFn.mockImplementation(async () => {
+      authState.awaitingEmailConfirmation = true
+    })
+    const wrapper = mountView()
+    await acceptTerms(wrapper)
+    await fillForm(wrapper)
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(pushMock).not.toHaveBeenCalled()
+  })
+
+  it('o link de login carrega o plano escolhido para retomar o checkout', async () => {
+    routeState.query = { plan: 'basico' }
+    authState.awaitingEmailConfirmation = true
+    const wrapper = mountView()
+
+    const links = wrapper.findAllComponents(RouterLinkStub)
+    expect(
+      links.some((l) => JSON.stringify(l.props('to')).includes('"plan":"basico"')),
+    ).toBe(true)
   })
 
   it('inputs obrigatórios têm required e a senha tem minlength', () => {
