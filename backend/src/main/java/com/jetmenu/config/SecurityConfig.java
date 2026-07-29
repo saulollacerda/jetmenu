@@ -40,10 +40,14 @@ public class SecurityConfig {
                             // obtain a token without a bearer token.
                             .requestMatchers("/api/auth/dev-login", "/api/auth/dev-register").permitAll()
                             .requestMatchers("/api/plans").permitAll()
-                            // NOTE: the payment provider's webhook path used to be permitted
-                            // here. It was removed together with the provider — the next
-                            // billing integration must add its own permitAll entry, or its
-                            // server-to-server callbacks will be rejected with 401.
+                            // Stripe's server-to-server callbacks carry no bearer token, so
+                            // this path MUST stay public — otherwise every payment
+                            // notification is rejected with 401 and no subscription ever
+                            // activates. It is not unauthenticated in practice: the endpoint
+                            // refuses any request whose Stripe-Signature header does not
+                            // verify against STRIPE_WEBHOOK_SECRET (see StripeEventVerifier).
+                            // Covered by StripeWebhookSecurityTest.
+                            .requestMatchers("/api/webhooks/stripe").permitAll()
                             .anyRequest().authenticated()
                     )
                     // Without an explicit entry point Spring Security answers an
