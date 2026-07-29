@@ -26,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -39,6 +40,8 @@ import static org.mockito.Mockito.lenient;
 @ExtendWith(MockitoExtension.class)
 @DisplayName("OrderService")
 class OrderServiceTest {
+
+    private static final ZoneId BRAZIL_ZONE = ZoneId.of("America/Sao_Paulo");
 
     @Mock
     private OrderRepository orderRepository;
@@ -277,9 +280,9 @@ class OrderServiceTest {
             given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
             given(orderRepository.save(any(Order.class))).willReturn(order);
 
-            LocalDateTime before = LocalDateTime.now();
+            LocalDateTime before = LocalDateTime.now(BRAZIL_ZONE);
             orderService.create(merchantId, orderRequest);
-            LocalDateTime after = LocalDateTime.now();
+            LocalDateTime after = LocalDateTime.now(BRAZIL_ZONE);
 
             then(orderRepository).should().save(argThat(savedOrder ->
                     !savedOrder.getDateTime().isBefore(before) &&
