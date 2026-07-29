@@ -37,7 +37,7 @@ jobs:
 
       - name: Deploy to Railway
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.JETMENU_RAILWAY_TOKEN }}
         run: railway up --service backend --detach
 
   deploy-frontend:
@@ -71,5 +71,5 @@ jobs:
 
       - name: Deploy to Railway
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.JETMENU_RAILWAY_TOKEN }}
         run: railway up --service frontend --detach
