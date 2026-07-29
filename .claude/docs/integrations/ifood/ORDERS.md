@@ -1,9 +1,10 @@
 # iFood — Orders
 
-MenuBank consome pedidos do iFood via **polling de eventos** (não webhook). São processados três
-eventos do ciclo de vida: `CONFIRMED` (importa o pedido cedo), `CANCELLED` (cancela e tira dos ganhos)
-e `CONCLUDED` (solidifica). Os demais (`PLACED`, `DISPATCHED`, `READY_TO_PICKUP`, etc.) são apenas
-reconhecidos (acknowledged) para não voltarem na fila, sem nenhuma ação de negócio.
+JetMenu consome pedidos do iFood via **polling de eventos** (não webhook). São processados quatro
+eventos do ciclo de vida: `CONFIRMED` (importa o pedido cedo), `CANCELLED` (cancela e tira dos ganhos),
+`CONCLUDED` (solidifica) e `CANCELLATION_REQUESTED` (cliente pediu cancelamento — só notifica). Os
+demais (`PLACED`, `DISPATCHED`, `READY_TO_PICKUP`, etc.) são apenas reconhecidos (acknowledged) para
+não voltarem na fila, sem nenhuma ação de negócio.
 
 **Base URL:** `https://merchant-api.ifood.com.br/order/v1.0`
 
@@ -14,7 +15,10 @@ emitido pelo iFood muito depois (entrega confirmada, ou timeout de 4h/6h/13h dep
 loja/entrega, somado a `deliveryTimeInSeconds`). Como o `CONCLUDED` chega **automaticamente** mesmo que
 o app nunca chame `confirm`/`startPreparation`/`dispatch`, ele funciona como *safety net*: qualquer
 pedido cujo `CONFIRMED` tenha sido perdido (ou anterior a esta feature) é importado nesse momento.
-Não há máquina de estados local nem ações de confirmar/preparar/despachar.
+Não há máquina de estados local; as ações de escrita disponíveis são as exigidas pela homologação
+(`confirm`, `readyToPickup`, `dispatch` e a família de cancelamento) — ver
+[Ações do ciclo de vida](#ações-do-ciclo-de-vida-escrita).
+`startPreparation` não é implementado (não é exigido na homologação).
 
 | Evento | Pedido já existe? | Ação |
 |---|---|---|
@@ -24,6 +28,8 @@ Não há máquina de estados local nem ações de confirmar/preparar/despachar.
 | `CONCLUDED` | não | importa completo com `status = PAID` (fallback: `CONFIRMED` perdido/anterior à feature) |
 | `CANCELLED` | sim | `status → CANCELLED` + notificação `ORDER_CANCELLED` (não precisa buscar detalhe) |
 | `CANCELLED` | não | `GET /orders/{id}` → importa com `status = CANCELLED` (404 → loga e pula) |
+| `CANCELLATION_REQUESTED` | sim | notificação `ORDER_CANCELLATION_REQUESTED` — **status inalterado** |
+| `CANCELLATION_REQUESTED` | não | `GET /orders/{id}` → importa com `status = PENDING`, depois notifica |
 
 Regras de transição:
 
@@ -33,6 +39,18 @@ Regras de transição:
 - Eventos repetidos são idempotentes (no-op): `CONFIRMED` de pedido existente é ignorado, `CANCELLED`
   de pedido já cancelado não gera nova notificação, `CONCLUDED` de pedido já `PAID` não muda nada.
 
+### Solicitação de cancelamento do cliente
+
+O `CANCELLATION_REQUESTED` é o pedido de cancelamento feito pelo **cliente** (ou pela plataforma) que
+o lojista precisa responder. Ele **não muda o status local** — uma solicitação sem resposta não pode
+tirar o pedido dos ganhos nem dessincronizar o estado local do iFood. O único efeito é a notificação
+`ORDER_CANCELLATION_REQUESTED`, cujo `referenceData` carrega o **id local** do pedido (é por ele que a
+UI chama os endpoints de aceite/recusa) e o `referenceDisplay` carrega o id do iFood. Pedido já
+`CANCELLED` ou `TEST` não gera notificação. A notificação deduplica por `(merchant, tipo, pedido)`,
+então um evento reenviado não empilha alertas.
+
+O cancelamento de fato acontece só quando o lojista aceita (ou quando o `CANCELLED` chega depois).
+
 ### Cancelamento e ganhos
 
 Dashboard e exportação (`DashboardService`, `ExportService`) só agregam pedidos com `status = PAID`.
@@ -40,6 +58,81 @@ O cancelamento remove o pedido das métricas pela simples troca de status — n�
 estorno. Quando um pedido **já importado** é cancelado, é criada uma notificação `ORDER_CANCELLED`
 (`NotificationType`) para o lojista, incluindo `cancelReasonDescription` quando disponível no detalhe
 do pedido.
+
+## Ações do ciclo de vida (escrita)
+
+Ações disparadas pelo **lojista** (nunca automáticas — não existe scheduler que confirme pedidos).
+`IfoodOrderActionClient` → `IfoodOrderActionService` → `IfoodOrderActionController`, com o mesmo
+padrão de retry em 401 do `IfoodOrderSyncService` (401 → `handleUnauthorized()` → repete uma vez).
+
+| Ação | Chamada ao iFood | Status local depois | Quando |
+|---|---|---|---|
+| Confirmar | `POST /orders/{id}/confirm` | `PENDING` (inalterado) | SLA de **8 min** para `DELIVERY` e `TAKEOUT`, independente do `orderTiming` |
+| Pronto para retirada | `PUT /orders/{id}/readyToPickup` | `READY` | Pedidos `TAKEOUT`, para notificar o cliente |
+| Despachar | `PUT /orders/{id}/dispatch` | `DELIVERED` | Pedidos `DELIVERY` com entrega própria, ao sair para entrega |
+| Listar motivos | `GET /orders/{id}/cancellationReasons` | — | Antes de cancelar: o lojista escolhe um motivo do iFood |
+| Cancelar | `POST /orders/{id}/requestCancellation` | `CANCELLED` | Cancelamento por iniciativa do lojista |
+| Aceitar cancelamento | `POST /orders/{id}/acceptCancellation` | `CANCELLED` | Resposta ao `CANCELLATION_REQUESTED` |
+| Recusar cancelamento | `POST /orders/{id}/denyCancellation` | inalterado | Resposta ao `CANCELLATION_REQUESTED` |
+
+> **Verbos HTTP e paths não validados.** `PUT` para `readyToPickup`/`dispatch` vem do
+> `HOMOLOGATION.md`; `confirm` e toda a família de cancelamento usam `POST`. Os segmentos de path do
+> cancelamento (`cancellationReasons`, `requestCancellation`, `acceptCancellation`,
+> `denyCancellation`), o corpo do `requestCancellation` (`{cancellationCode, reason}`), o formato dos
+> motivos (`{cancelCodeId, description}`) e o nome do evento `CANCELLATION_REQUESTED` foram
+> **inferidos**: não foi possível conferir com a doc oficial do iFood — validar contra a sandbox
+> antes da homologação. Cada verbo e cada segmento estão em uma única linha do
+> `IfoodOrderActionClient`; o nome do evento é uma constante do `IfoodOrderSyncService`.
+
+### Motivos de cancelamento
+
+A homologação exige que o lojista escolha entre os motivos **do iFood** — JetMenu nunca inventa um
+motivo. `GET /orders/{id}/cancellationReasons` devolve pares `{cancelCodeId, description}`; a UI
+mostra a `description` e devolve o `cancelCodeId` no `POST /cancel`. Os dois campos viajam juntos até
+a UI e de volta, sem tradução.
+
+Guard rails (rejeitam antes de chamar o iFood): pedido inexistente para o merchant (404), pedido com
+`origin != IFOOD`, sem `externalOrderId`, ou em status terminal (`CANCELLED`/`TEST`) → 409. Erros do
+iFood: 404 → 404, 401 persistente → reautorização (409), demais `4xx` → 400 com o detalhe da API.
+O status local só muda **depois** de o iFood aceitar a ação.
+
+**Tipo do pedido.** A homologação amarra `readyToPickup` a `TAKEOUT` e `dispatch` a `DELIVERY`, e o
+backend recusa a combinação errada com 409 (`Order.orderType` conhecido e contraditório). `orderType`
+**nulo não bloqueia**: é o valor de todo pedido manual e de tudo importado antes da V27, e recusar
+esses quebraria a base existente. `confirm` não depende do tipo.
+
+**Retry em falha transitória.** Só o `confirm` repete (2 tentativas, 300 ms de intervalo) em `5xx` e
+erro de rede: é a única ação com prazo, e um blip no sétimo minuto do SLA custa o pedido ao lojista.
+`dispatch`/`readyToPickup` não repetem — sem prazo, o erro sobe na hora e o lojista tenta de novo.
+Nenhuma ação repete em `4xx`.
+
+### SLA de confirmação (8 minutos)
+
+Regra: `deadline = Order.dateTime + 8 min` (`Order.dateTime` já é `createdAt` convertido para
+`America/Sao_Paulo`). O backend expõe isso pronto em
+`GET /api/integrations/ifood/orders/{orderId}/confirmation-window` →
+`{orderId, createdAt, deadline, remainingSeconds, expired}`, com `remainingSeconds` travado em zero
+quando a janela acaba. A UI pode chamar uma vez e contar regressivamente a partir do `deadline`.
+
+### Endpoints REST expostos ao frontend
+
+| Método | Path | Resposta |
+|---|---|---|
+| POST | `/api/integrations/ifood/orders/{orderId}/confirm` | `200` `{orderId, externalOrderId, status}` |
+| POST | `/api/integrations/ifood/orders/{orderId}/ready-to-pickup` | `200` `{orderId, externalOrderId, status}` |
+| POST | `/api/integrations/ifood/orders/{orderId}/dispatch` | `200` `{orderId, externalOrderId, status}` |
+| GET | `/api/integrations/ifood/orders/{orderId}/confirmation-window` | `200` `{orderId, createdAt, deadline, remainingSeconds, expired}` |
+| GET | `/api/integrations/ifood/orders/{orderId}/cancellation-reasons` | `200` `[{cancelCodeId, description}]` |
+| POST | `/api/integrations/ifood/orders/{orderId}/cancel` | `200` `{orderId, externalOrderId, status}` |
+| POST | `/api/integrations/ifood/orders/{orderId}/cancellation-request/accept` | `200` `{orderId, externalOrderId, status}` |
+| POST | `/api/integrations/ifood/orders/{orderId}/cancellation-request/deny` | `200` `{orderId, externalOrderId, status}` |
+
+Só o `POST /cancel` tem corpo: `{"cancellationCode": "501", "reason": "PROBLEMAS DE SISTEMA"}` —
+`cancellationCode` é obrigatório (vazio → `400`) e `reason` é opcional. As demais não têm corpo.
+
+Erros são `ProblemDetail` com `detail` em pt-BR — inclusive
+`409 "Só é possível marcar como pronto para retirada um pedido de retirada."` e
+`409 "Só é possível despachar um pedido de entrega."` para o tipo errado.
 
 ## Polling de eventos
 
@@ -117,7 +210,7 @@ o pedido depois.
 | `orderType` | enum | `DELIVERY`, `TAKEOUT`, `DINE_IN` |
 | `orderTiming` | enum | `IMMEDIATE` ou `SCHEDULED` |
 | `salesChannel` | string | `IFOOD`, `DIGITAL_CATALOG`, `POS`, `TOTEM`, `IFOOD_SHOP`, `GROCERY_WHITELABEL` |
-| `category` | string | `FOOD`, `GROCERY`, `ANOTAI`, `FOOD_SELF_SERVICE` — **MenuBank só processa `category == "FOOD"`**; demais categorias são ignoradas na importação |
+| `category` | string | `FOOD`, `GROCERY`, `ANOTAI`, `FOOD_SELF_SERVICE` — **JetMenu só processa `category == "FOOD"`**; demais categorias são ignoradas na importação |
 | `createdAt` | date | Data/hora de criação (UTC) |
 | `preparationStartDateTime` | date | Horário recomendado para início do preparo |
 | `isTest` | boolean | Pedido de teste — **importado com `status = TEST`** (independente do evento de origem). `TEST` é terminal: `CONCLUDED`/`CANCELLED` não o alteram, então o pedido nunca entra nos ganhos (dashboard/exportação só agregam `PAID`) nem gera notificação de cancelamento |
@@ -168,18 +261,69 @@ o pedido depois.
 | `deliveryFee` | double | Taxa de entrega → `Order.deliveryFee` |
 | `orderAmount` | double | Total do pedido (`subTotal + deliveryFee + additionalFees - benefits`) → `Order.totalValue` |
 
-### Campos fora do escopo v1
+### `payments`
 
-`benefits`, `additionalFees`, `payments`, `delivery`/`deliveryAddress`, `takeout`, `dineIn`, `picking` —
-presentes na resposta da API, mas **não persistidos** nesta entrega (a entidade `Order` atual não tem
-campos para cupons, breakdown de pagamento ou endereço). Revisitar se algum dashboard precisar desses
-dados no futuro.
+Exigido pela homologação do módulo Order (bandeira do cartão e troco).
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `prepaid` | double | Valor já pago online → `Order.paymentPrepaidAmount` |
+| `pending` | double | Valor a receber na entrega → `Order.paymentPendingAmount` |
+| `methods[].value` | double | Valor deste meio de pagamento |
+| `methods[].currency` | string | Moeda (`BRL`) |
+| `methods[].method` | string | `CREDIT`, `DEBIT`, `CASH`, `MEAL_VOUCHER`, `PIX`, ... |
+| `methods[].type` | string | `ONLINE` (já pago) ou `OFFLINE` (recebido pela loja) |
+| `methods[].card.brand` | string | Bandeira do cartão — **exibida na comanda** |
+| `methods[].cash.changeFor` | double | Nota que o cliente vai entregar; o troco é `changeFor − value`, calculado no backend e exposto como `changeAmount` |
+
+Um pedido pode ter **mais de um meio de pagamento**, por isso cada um vira uma linha em
+`order_payment_methods` (child table de `orders`), não colunas em `orders`.
+
+### `benefits[]`
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `value` | double | Valor do cupom/desconto |
+| `target` | string | `CART`, `DELIVERY_FEE`, `ITEM`, ... |
+| `sponsorshipValues[].name` | string | `IFOOD` ou `MERCHANT` — **quem banca o desconto** |
+| `sponsorshipValues[].value` | double | Parcela bancada por esse patrocinador |
+
+Vários benefícios são **somados** em `Order.discountTotal`, e o rateio em
+`Order.discountIfoodValue` / `Order.discountMerchantValue`. Patrocinador desconhecido entra no total
+mas não no rateio (fica logado). **Nada disso é deduzido de nenhum valor** — o desconto já está
+embutido no `total.orderAmount` e é gravado apenas para exibição.
+
+### `delivery` / `takeout`
+
+| Campo | Destino |
+|---|---|
+| `delivery.mode` | `Order.deliveryMode` |
+| `delivery.deliveredBy` | `Order.deliveredBy` (`IFOOD` ou `MERCHANT`) |
+| `delivery.deliveryDateTime` | `Order.deliveryDateTime` (UTC → `America/Sao_Paulo`) |
+| `delivery.observations` | `Order.deliveryObservations` — observações de entrega na comanda |
+| `delivery.pickupCode` | `Order.pickupCode` — código de coleta |
+| `takeout.mode` | `Order.takeoutMode` |
+| `takeout.takeoutDateTime` | `Order.takeoutDateTime` (UTC → `America/Sao_Paulo`) |
+
+`delivery.deliveryAddress` **não é persistido** — JetMenu não guarda endereço.
+
+### Campos fora do escopo
+
+`additionalFees`, `deliveryAddress`, `dineIn` (parseado, não persistido) e `picking` — presentes na
+resposta da API, mas não persistidos. Revisitar se algum dashboard precisar desses dados no futuro.
 
 ## Mapeamento → `Order`/`OrderItem`/`OrderItemExtraIngredient`
 
-| Campo iFood | Destino MenuBank |
+| Campo iFood | Destino JetMenu |
 |---|---|
 | `id` | `Order.externalOrderId` |
+| `displayId` | `Order.displayId` |
+| `orderType` / `orderTiming` | `Order.orderType` / `Order.orderTiming` (valor desconhecido → `null`) |
+| `customer.documentNumber` | `Order.customerDocument` (CPF/CNPJ da NF-e) |
+| `items[].observations` | `OrderItem.observations` |
+| `payments` | `Order.paymentPrepaidAmount`/`paymentPendingAmount` + `OrderPaymentMethod` (1:N) |
+| `benefits[]` | `Order.discountTotal`/`discountIfoodValue`/`discountMerchantValue` |
+| `delivery` / `takeout` | Colunas descritivas em `Order` (ver acima) |
 | `createdAt` (UTC) | `Order.dateTime` — parse `OffsetDateTime` → converte para `America/Sao_Paulo` → `LocalDateTime` |
 | `customer.id` (1º) ou `customer.phone.number` não-0800 (2º) | Resolução de `Customer` — `customer.id` → `customers.external_id` |
 | `items[].externalCode` ou `items[].name` | Resolução de `Product` — `externalCode` primeiro, nome canônico como fallback |
@@ -196,4 +340,6 @@ dados no futuro.
 
 > A entidade `Order` não tem campo de motivo/timestamp de cancelamento — o cancelamento é apenas a
 > troca de `status`; o `cancelReasonDescription` (quando disponível) vai no texto da notificação
-> `ORDER_CANCELLED`.
+> `ORDER_CANCELLED`. Pela mesma razão não há coluna de "cancelamento pendente": a solicitação do
+> cliente vive só na notificação `ORDER_CANCELLATION_REQUESTED`, que é o que a UI usa para oferecer
+> aceitar/recusar.

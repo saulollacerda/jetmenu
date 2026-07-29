@@ -90,7 +90,7 @@ async function handleSubmit() {
         "
       >
         <div :style="{ fontSize: '26px', fontWeight: 700, letterSpacing: '-0.5px' }">
-          menu<span :style="{ color: UI.emerald }">bank</span>
+          jet<span :style="{ color: UI.emerald }">menu</span>
         </div>
 
         <div
@@ -170,7 +170,7 @@ async function handleSubmit() {
           </div>
         </div>
 
-        <div :style="{ fontSize: '11.5px', color: '#64748b' }">© 2026 menubank · v 2.4</div>
+        <div :style="{ fontSize: '11.5px', color: '#64748b' }">© 2026 jetmenu · v 2.4</div>
       </div>
     </div>
 

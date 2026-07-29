@@ -1,6 +1,6 @@
 # Anota.AI Integration
 
-MenuBank integrates with Anota.AI to import orders and sync the product catalog.
+JetMenu integrates with Anota.AI to import orders and sync the product catalog.
 Authentication: partner token via `Authorization: Bearer <token>` header, configured per merchant.
 
 ## Base URLs
@@ -15,7 +15,7 @@ Authentication: partner token via `Authorization: Bearer <token>` header, config
 | Value | Meaning |
 |---|---|
 | `0` | Pending — not yet imported |
-| `1` | Acknowledged / imported by MenuBank |
+| `1` | Acknowledged / imported by JetMenu |
 | `2` | In preparation / dispatched (iFood flow) |
 | `3` | Completed / delivered |
 
@@ -205,7 +205,7 @@ total = item.total (already includes subItems — use directly)
 |---|---|---|
 | `additionalFees` | Has service fees | Empty array |
 | `discounts` | Has iFood promotional discounts | Empty array |
-| `items[].internalId` | Empty string | MenuBank product ID |
+| `items[].internalId` | Empty string | JetMenu product ID |
 | `items[].subItems[].internalId` | Empty string | Anota.AI complement ID (extras são resolvidos por **match de nome canônico** contra a tabela `ingredients`, não pelo internalId) |
 | `items[].backoffice_id` | Empty | Anota.AI backoffice numeric ID |
 | `customer.localizer` | Present (pickup code) | Absent |
@@ -238,5 +238,5 @@ Key fields per category:
 ### Integration Notes
 
 - Item price = current day-of-week from `week_prices`.
-- `internalId` on order items maps to MenuBank product ID; `externalId` is the Anota.AI reference.
+- `internalId` on order items maps to JetMenu product ID; `externalId` is the Anota.AI reference.
 - The `/ping/get/{id}` response already contains resolved `subItems` with calculated prices — no need to re-resolve `next_steps` at import time.

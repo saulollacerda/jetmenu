@@ -60,6 +60,27 @@ vi.mock('@/services/orderFichaService', () => ({
   },
 }))
 
+const ifoodOrderActionMock = {
+  confirm: vi.fn(),
+  readyToPickup: vi.fn(),
+  dispatch: vi.fn(),
+  getConfirmationWindow: vi.fn(),
+}
+
+vi.mock('@/services/ifoodOrderActionService', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/services/ifoodOrderActionService')>()
+  return {
+    ...original,
+    ifoodOrderActionService: {
+      confirm: (...args: [string]) => ifoodOrderActionMock.confirm(...args),
+      readyToPickup: (...args: [string]) => ifoodOrderActionMock.readyToPickup(...args),
+      dispatch: (...args: [string]) => ifoodOrderActionMock.dispatch(...args),
+      getConfirmationWindow: (...args: [string]) =>
+        ifoodOrderActionMock.getConfirmationWindow(...args),
+    },
+  }
+})
+
 import OrdersView from '@/views/OrdersView.vue'
 
 const showToastMock = vi.fn()
@@ -70,6 +91,17 @@ vi.mock('@/composables/useToast', () => ({
 describe('OrdersView', () => {
   beforeEach(() => {
     showToastMock.mockClear()
+    ifoodOrderActionMock.confirm.mockReset()
+    ifoodOrderActionMock.readyToPickup.mockReset()
+    ifoodOrderActionMock.dispatch.mockReset()
+    ifoodOrderActionMock.getConfirmationWindow.mockReset()
+    ifoodOrderActionMock.getConfirmationWindow.mockResolvedValue({
+      orderId: 'o1',
+      createdAt: '2026-05-14T10:00:00',
+      deadline: '2026-05-14T10:08:00',
+      remainingSeconds: 300,
+      expired: false,
+    })
     orderFichaFindMock.mockReset()
     orderFichaReplaceMock.mockReset()
     orderFichaFindMock.mockResolvedValue({ lines: [], totalCost: 0 })
@@ -190,7 +222,7 @@ describe('OrdersView', () => {
 
     expect(orderStoreMock.create).toHaveBeenCalledWith({
       customerId: 'c1',
-      origin: 'MENUBANK',
+      origin: 'JETMENU',
       items: [
         {
           productId: 'p1',
@@ -1460,7 +1492,7 @@ describe('OrdersView', () => {
             },
           ],
           items: [],
-          origin: 'MENUBANK',
+          origin: 'JETMENU',
         },
       ]
 
@@ -1564,6 +1596,72 @@ describe('OrdersView', () => {
 
       expect(ingredientStoreMock.create).not.toHaveBeenCalled()
       expect(wrapper.get('[data-testid="order-ficha-create-error"]').text()).toBeTruthy()
+    })
+  })
+
+  describe('comanda do iFood', () => {
+    function ifoodOrder(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'o1',
+        dateTime: '2026-05-14T10:00:00',
+        customerId: 'c1',
+        customerName: 'João',
+        status: 'PENDING',
+        totalValue: 60,
+        estimatedProfit: 26,
+        origin: 'IFOOD',
+        displayId: '3421',
+        orderType: 'DELIVERY',
+        items: [
+          {
+            id: 'oi1',
+            productId: 'p1',
+            productName: 'Hambúrguer',
+            quantity: 2,
+            unitPrice: 30,
+            unitCost: 17,
+            totalCost: 34,
+          },
+        ],
+        ...overrides,
+      }
+    }
+
+    it('should open the ticket for an iFood order', async () => {
+      orderStoreMock.items = [ifoodOrder()]
+      const wrapper = mount(OrdersView)
+
+      await wrapper.get('[data-testid="order-o1-ticket-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="ifood-ticket-modal-title"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('3421')
+    })
+
+    it('should not offer the ticket for a non-iFood order', () => {
+      orderStoreMock.items = [ifoodOrder({ origin: 'JETMENU' })]
+      const wrapper = mount(OrdersView)
+
+      expect(wrapper.find('[data-testid="order-o1-ticket-button"]').exists()).toBe(false)
+    })
+
+    it('should refresh the list when the ticket reports a new status', async () => {
+      orderStoreMock.items = [ifoodOrder()]
+      ifoodOrderActionMock.dispatch.mockResolvedValue({
+        orderId: 'o1',
+        externalOrderId: 'ext-1',
+        status: 'DELIVERED',
+      })
+      const wrapper = mount(OrdersView)
+
+      await wrapper.get('[data-testid="order-o1-ticket-button"]').trigger('click')
+      await flushPromises()
+      orderStoreMock.fetchPage.mockClear()
+
+      await wrapper.get('[data-testid="ifood-ticket-dispatch"]').trigger('click')
+      await flushPromises()
+
+      expect(orderStoreMock.fetchPage).toHaveBeenCalled()
     })
   })
 })

@@ -151,7 +151,7 @@ function changeStatus(status: IfoodCatalogItemStatus) {
 <template>
   <UIModal
     title="Publicar cardápio no iFood"
-    subtitle="Envia seus produtos do MenuBank para o Cardápio Digital (WHITELABEL) da sua loja no iFood."
+    subtitle="Envia seus produtos do JetMenu para o Cardápio Digital (WHITELABEL) da sua loja no iFood."
     :width="600"
     title-test-id="ifood-publish-modal-title"
     @close="emit('close')"

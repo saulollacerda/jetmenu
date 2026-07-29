@@ -16,7 +16,7 @@ services:
       db:
         condition: service_healthy
     networks:
-      - menubank-network
+      - jetmenu-network
  
   frontend:
     build: ./frontend
@@ -26,7 +26,7 @@ services:
     depends_on:
       - backend
     networks:
-      - menubank-network
+      - jetmenu-network
 
   db:
     image: postgres:16-alpine
@@ -43,10 +43,10 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - menubank-network
+      - jetmenu-network
 
 networks:
-  menubank-network:
+  jetmenu-network:
     driver: bridge
 
 volumes:

@@ -93,7 +93,7 @@ async function logout() {
           color: '#fff',
         }"
       >
-        menu<span :style="{ color: UI.emerald }">bank</span>
+        jet<span :style="{ color: UI.emerald }">menu</span>
       </div>
       <div
         :style="{
@@ -171,7 +171,7 @@ async function logout() {
         </div>
         <div :style="{ flex: 1, minWidth: 0 }">
           <div :style="{ fontSize: '12.5px', fontWeight: 600, color: '#fff' }">
-            {{ auth.restaurantName || 'MenuBank' }}
+            {{ auth.restaurantName || 'JetMenu' }}
           </div>
           <div
             v-if="storeStatus !== null"

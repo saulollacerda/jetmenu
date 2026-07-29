@@ -13,7 +13,7 @@ import { AuthError } from '@/lib/authTypes'
 const TOKEN =
   'eyJhbGciOiJSUzI1NiJ9.eyJlbWFpbCI6ImRldkBleGFtcGxlLmNvbSJ9.sig'
 
-const TOKEN_KEY = 'menubank.auth.token'
+const TOKEN_KEY = 'jetmenu.auth.token'
 
 /** Builds an unsigned JWT with the given payload (signature irrelevant for the tests). */
 function fakeJwt(payload: Record<string, unknown>): string {

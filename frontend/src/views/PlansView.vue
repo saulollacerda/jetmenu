@@ -3,11 +3,13 @@
     <!-- NAV -->
     <header class="lp-nav">
       <div class="lp-nav-inner">
-        <RouterLink to="/home" class="lp-wordmark-link">
-          <div class="lp-wordmark">menu<span>bank</span></div>
-        </RouterLink>
+        <a :href="LANDING_URL" class="lp-wordmark-link" data-testid="landing-wordmark-link">
+          <div class="lp-wordmark">jet<span>menu</span></div>
+        </a>
         <div class="lp-spacer"></div>
-        <RouterLink to="/home" class="lp-nav-signin">Voltar ao início</RouterLink>
+        <a :href="LANDING_URL" class="lp-nav-signin" data-testid="landing-back-link">
+          Voltar ao início
+        </a>
       </div>
     </header>
 
@@ -56,18 +58,17 @@
               </li>
             </ul>
 
-            <button
-              type="button"
-              class="lp-plan-cta"
-              data-testid="plan-cta"
-              :disabled="subscribingPlanId === plan.id"
-              @click="subscribe(plan)"
-            >
-              {{ subscribingPlanId === plan.id ? 'Gerando pagamento…' : 'Assinar agora' }}
+            <button type="button" class="lp-plan-cta" data-testid="plan-cta" @click="subscribe(plan)">
+              {{ auth.isAuthenticated ? 'Falar com o suporte' : 'Criar minha conta' }}
             </button>
 
-            <p v-if="checkoutError" class="lp-plan-error lp-plan-error-inline">
-              {{ checkoutError }}
+            <p
+              v-if="checkoutUnavailable"
+              class="lp-plan-notice"
+              data-testid="plan-unavailable-notice"
+            >
+              O pagamento online está temporariamente indisponível enquanto integramos um novo
+              provedor. Entre em contato com o suporte para ativar seu plano.
             </p>
 
             <p class="lp-plan-reassure">Sem fidelidade. Cancele quando quiser.</p>
@@ -85,7 +86,11 @@ import { billingService } from '@/services/billingService'
 import { useAuthStore } from '@/stores/authStore'
 import type { PlanResponse } from '@/types/Billing'
 
-// ── Inline SVG icon (matches LandingView aesthetic) ─────────────────────────
+// The landing page is a separate project served at the root domain; this app
+// only owns app.jetmenu.com.br, so linking back to it is a plain external link.
+const LANDING_URL = 'https://jetmenu.com.br'
+
+// ── Inline SVG icon (matches the landing page aesthetic) ────────────────────
 const IconCheck = {
   props: { size: { default: 16 }, color: { default: 'currentColor' } },
   template: `<svg :width="size" :height="size" viewBox="0 0 24 24" fill="none" :stroke="color" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>`,
@@ -97,8 +102,7 @@ const auth = useAuthStore()
 const plans = ref<PlanResponse[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
-const subscribingPlanId = ref<string | null>(null)
-const checkoutError = ref<string | null>(null)
+const checkoutUnavailable = ref(false)
 
 // Benefit-oriented copy used when the plan payload does not carry its own list.
 const DEFAULT_FEATURES = [
@@ -118,7 +122,7 @@ function planDescription(plan: PlanResponse): string {
   const description = plan.features?.description
   return typeof description === 'string'
     ? description
-    : 'Acesso completo a todas as funcionalidades do menubank.'
+    : 'Acesso completo a todas as funcionalidades do JetMenu.'
 }
 
 function planFeatures(plan: PlanResponse): string[] {
@@ -141,28 +145,24 @@ async function loadPlans() {
   }
 }
 
-async function subscribe(plan: PlanResponse) {
+// Sign-up still works; online checkout does not. The previous payment provider was
+// removed and the next one is not integrated yet, so an authenticated visitor gets an
+// explicit notice instead of a checkout that cannot be created. To restore it, call
+// billingService.createCheckout(plan.id) here and redirect to the returned URL.
+function subscribe(_plan: PlanResponse) {
   if (!auth.isAuthenticated) {
     router.push('/register')
     return
   }
-  subscribingPlanId.value = plan.id
-  checkoutError.value = null
-  try {
-    const response = await billingService.createCheckout(plan.id)
-    window.location.href = response.url
-  } catch {
-    checkoutError.value = 'Não foi possível iniciar o pagamento. Tente novamente.'
-  } finally {
-    subscribingPlanId.value = null
-  }
+  checkoutUnavailable.value = true
 }
 
 onMounted(loadPlans)
 </script>
 
 <style scoped>
-/* Reuses the LandingView (lp-) visual language. */
+/* Reuses the landing page (lp-) visual language, kept in sync by hand since
+   that page now lives in the jetmenu-lp project. */
 .lp-root {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   background: #fff;
@@ -410,13 +410,15 @@ onMounted(loadPlans)
   opacity: 0.65;
   cursor: default;
 }
-.lp-plan-error {
-  color: #fca5a5;
+.lp-plan-notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fde68a;
   font-size: 12.5px;
-  font-weight: 600;
-}
-.lp-plan-error-inline {
-  margin-top: 10px;
+  line-height: 1.45;
   text-align: center;
 }
 .lp-plan-reassure {

@@ -98,7 +98,7 @@ const STATUS_STYLE: Record<string, { bg: string; fg: string; label: string }> = 
 function originLabel(o: OrderOrigin | undefined): string {
   if (o === 'ANOTA_AI') return 'Anota.AI'
   if (o === 'IFOOD') return 'iFood'
-  return 'MenuBank'
+  return 'JetMenu'
 }
 
 function timeOf(iso: string): string {
@@ -141,7 +141,7 @@ function navIngredientsWithName(name: string | null) {
 <template>
   <div style="display: flex; flex-direction: column; flex: 1">
     <UITopbar
-      :title="`Olá, ${auth.restaurantName || 'MenuBank'} 👋`"
+      :title="`Olá, ${auth.restaurantName || 'JetMenu'} 👋`"
       :subtitle="`Resumo da sua operação em ${periodLabel}`"
     >
       <template #actions>

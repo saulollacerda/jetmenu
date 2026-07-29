@@ -68,6 +68,9 @@ describe('NotificationBell', () => {
     expect(NOTIFICATION_TYPE_LABELS.MISSING_INGREDIENT).toBe('Ingrediente não cadastrado')
     expect(NOTIFICATION_TYPE_LABELS.MISSING_PRODUCT).toBe('Produto não cadastrado')
     expect(NOTIFICATION_TYPE_LABELS.ORDER_CANCELLED).toBe('Pedido cancelado')
+    expect(NOTIFICATION_TYPE_LABELS.ORDER_CANCELLATION_REQUESTED).toBe(
+      'Solicitação de cancelamento',
+    )
   })
 
   it('MISSING_INGREDIENT não resolvida mostra ações "Cadastrar ingrediente" e "Descartar"', async () => {
@@ -118,6 +121,27 @@ describe('NotificationBell', () => {
     expect(iconBox.exists()).toBe(true)
     expect(iconBox.attributes('aria-label')).toBe('Pedido cancelado')
     expect(iconNameInside(wrapper, iconBox.element)).toBe('x')
+  })
+
+  it('ORDER_CANCELLATION_REQUESTED aponta a comanda como lugar de responder', async () => {
+    const wrapper = await mountAndOpen([
+      buildNotification({
+        id: 'n-4',
+        type: 'ORDER_CANCELLATION_REQUESTED',
+        title: 'Solicitação de cancelamento',
+        message: 'O cliente solicitou o cancelamento do pedido ext-1.',
+        referenceData: 'ord-uuid-1',
+        referenceDisplay: 'ext-1',
+      }),
+    ])
+
+    // Sem ação primária: aceitar/recusar acontece na comanda, com o pedido à vista.
+    expect(wrapper.find('[data-testid="notification-n-4-action-button"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="notification-n-4-dismiss-button"]').exists()).toBe(true)
+
+    const iconBox = typeIconOf(wrapper, 'n-4')
+    expect(iconBox.attributes('aria-label')).toBe('Solicitação de cancelamento')
+    expect(iconNameInside(wrapper, iconBox.element)).toBe('alert')
   })
 
   it('mantém ícone "alert" com label pt-BR para MISSING_INGREDIENT', async () => {

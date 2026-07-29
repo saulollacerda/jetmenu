@@ -204,7 +204,6 @@ const billingSubscription = ref<SubscriptionResponse | null>(null)
 const billingLoading = ref(false)
 const billingLoaded = ref(false)
 const billingError = ref<string | null>(null)
-const subscribingPlanId = ref<string | null>(null)
 
 const BILLING_STATUS_LABELS: Record<SubscriptionResponse['status'], string> = {
   PENDING: 'Aguardando pagamento',
@@ -223,7 +222,7 @@ const billingStatusDetail = computed(() => {
   const sub = billingSubscription.value
   if (!sub) return ''
   if (sub.status === 'PENDING') {
-    return 'Escolha um plano e conclua o pagamento para começar a usar o MenuBank.'
+    return 'Escolha um plano e conclua o pagamento para começar a usar o JetMenu.'
   }
   if (sub.status === 'TRIAL' && sub.trialEndsAt) {
     return `Seu teste grátis termina em ${formatDate(sub.trialEndsAt)}. Assine para não perder o acesso.`
@@ -234,7 +233,7 @@ const billingStatusDetail = computed(() => {
   if (sub.status === 'PAST_DUE') {
     return 'Há um pagamento pendente. Renove a assinatura para manter o acesso.'
   }
-  return 'Sua assinatura está cancelada. Assine um plano para continuar usando o MenuBank.'
+  return 'Sua assinatura está cancelada. Assine um plano para continuar usando o JetMenu.'
 })
 
 function formatBRL(value: number) {
@@ -271,19 +270,10 @@ async function loadBilling() {
   }
 }
 
-async function subscribeToPlan(plan: PlanResponse) {
-  subscribingPlanId.value = plan.id
-  billingError.value = null
-  try {
-    const { url } = await billingService.createCheckout(plan.id)
-    // Same-tab redirect: AbacatePay brings the user back via returnUrl/completionUrl.
-    window.open(url, '_self')
-  } catch {
-    billingError.value = 'Não foi possível iniciar o pagamento. Tente novamente.'
-  } finally {
-    subscribingPlanId.value = null
-  }
-}
+// NOTE: online checkout is intentionally absent. The previous payment provider was
+// removed and the next one is not integrated yet, so the screen shows an explicit
+// notice instead of a button that cannot work. To restore it, call
+// billingService.createCheckout(plan.id) and redirect to the returned URL.
 
 watch(section, (current) => {
   if (current === 'billing' && !billingLoaded.value && !billingLoading.value) {
@@ -605,7 +595,7 @@ onMounted(async () => {
                   <div :style="{ fontSize: '11px', color: ifoodConnectBlocked ? UI.amber2 : UI.textSub }">
                     {{ ifoodConnectBlocked
                       ? 'Integração em homologação pelo iFood — disponível em breve.'
-                      : 'Autorize o MenuBank no portal do iFood.' }}
+                      : 'Autorize o JetMenu no portal do iFood.' }}
                   </div>
                 </div>
                 <UIPill
@@ -1288,7 +1278,25 @@ onMounted(async () => {
             Plano e pagamento
           </div>
           <div :style="{ fontSize: '12.5px', color: UI.textSub, marginBottom: '18px' }">
-            Sua assinatura do MenuBank, com pagamento via Pix (AbacatePay).
+            Sua assinatura do JetMenu.
+          </div>
+
+          <div
+            data-testid="billing-unavailable-notice"
+            :style="{
+              padding: '12px 14px',
+              background: UI.amberBg,
+              color: UI.amber2,
+              border: `1px solid ${UI.border}`,
+              borderRadius: '10px',
+              fontSize: '12.5px',
+              lineHeight: 1.5,
+              marginBottom: '16px',
+            }"
+          >
+            O pagamento online está <strong>temporariamente indisponível</strong> enquanto
+            integramos um novo provedor. Entre em contato com o suporte para ativar ou renovar
+            seu plano — sua assinatura atual continua valendo normalmente.
           </div>
 
           <div
@@ -1358,14 +1366,6 @@ onMounted(async () => {
                     {{ formatBRL(plan.priceMonthly) }}
                     <span :style="{ fontSize: '12px', color: UI.textSub, fontWeight: 500 }">/mês</span>
                   </div>
-                  <UIBtn
-                    variant="primary"
-                    data-testid="billing-subscribe-action"
-                    :disabled="subscribingPlanId === plan.id"
-                    @click="subscribeToPlan(plan)"
-                  >
-                    {{ subscribingPlanId === plan.id ? 'Gerando pagamento…' : 'Assinar com Pix' }}
-                  </UIBtn>
                 </div>
               </div>
             </div>

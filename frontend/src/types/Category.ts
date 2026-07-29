@@ -1,10 +1,10 @@
-/** Where a catalog record came from: created in MenuBank or imported. */
-export type CatalogOrigin = 'MENUBANK' | 'ANOTA_AI' | 'IFOOD'
+/** Where a catalog record came from: created in JetMenu or imported. */
+export type CatalogOrigin = 'JETMENU' | 'ANOTA_AI' | 'IFOOD'
 
 export function catalogOriginLabel(origin?: CatalogOrigin | null): string {
   if (origin === 'ANOTA_AI') return 'Anota.AI'
   if (origin === 'IFOOD') return 'iFood'
-  return 'MenuBank'
+  return 'JetMenu'
 }
 
 export function catalogOriginPillColor(origin?: CatalogOrigin | null): 'gray' | 'blue' | 'rose' {

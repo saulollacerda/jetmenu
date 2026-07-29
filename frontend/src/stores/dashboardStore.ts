@@ -133,7 +133,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
         filterMode.value === 'month'
           ? selectedMonth.value
           : `${resolvedStartDate.value}-${resolvedEndDate.value}`
-      a.download = `menubank-export-${label}.xlsx`
+      a.download = `jetmenu-export-${label}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
     } finally {
@@ -154,7 +154,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `menubank-fechamento-${iso}.xlsx`
+      a.download = `jetmenu-fechamento-${iso}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
     } finally {
