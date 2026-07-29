@@ -3,11 +3,13 @@
     <!-- NAV -->
     <header class="lp-nav">
       <div class="lp-nav-inner">
-        <RouterLink to="/home" class="lp-wordmark-link">
+        <a :href="LANDING_URL" class="lp-wordmark-link" data-testid="landing-wordmark-link">
           <div class="lp-wordmark">jet<span>menu</span></div>
-        </RouterLink>
+        </a>
         <div class="lp-spacer"></div>
-        <RouterLink to="/home" class="lp-nav-signin">Voltar ao início</RouterLink>
+        <a :href="LANDING_URL" class="lp-nav-signin" data-testid="landing-back-link">
+          Voltar ao início
+        </a>
       </div>
     </header>
 
@@ -84,7 +86,11 @@ import { billingService } from '@/services/billingService'
 import { useAuthStore } from '@/stores/authStore'
 import type { PlanResponse } from '@/types/Billing'
 
-// ── Inline SVG icon (matches LandingView aesthetic) ─────────────────────────
+// The landing page is a separate project served at the root domain; this app
+// only owns app.jetmenu.com.br, so linking back to it is a plain external link.
+const LANDING_URL = 'https://jetmenu.com.br'
+
+// ── Inline SVG icon (matches the landing page aesthetic) ────────────────────
 const IconCheck = {
   props: { size: { default: 16 }, color: { default: 'currentColor' } },
   template: `<svg :width="size" :height="size" viewBox="0 0 24 24" fill="none" :stroke="color" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>`,
@@ -155,7 +161,8 @@ onMounted(loadPlans)
 </script>
 
 <style scoped>
-/* Reuses the LandingView (lp-) visual language. */
+/* Reuses the landing page (lp-) visual language, kept in sync by hand since
+   that page now lives in the jetmenu-lp project. */
 .lp-root {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   background: #fff;
