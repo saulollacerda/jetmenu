@@ -51,6 +51,7 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy to Railway
+        working-directory: .
         env:
           RAILWAY_TOKEN: ${{ secrets.JETMENU_RAILWAY_TOKEN }}
         run: railway up --service backend --detach
@@ -85,6 +86,7 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy to Railway
+        working-directory: .
         env:
           RAILWAY_TOKEN: ${{ secrets.JETMENU_RAILWAY_TOKEN }}
         run: railway up --service frontend --detach
