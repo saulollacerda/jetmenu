@@ -644,6 +644,8 @@ public class OrderService {
                 .unitCost(unitCost)
                 .totalCost(totalCost)
                 .targetMarginPct(item.getTargetMarginPct())
+                // Margem realizada no item, mesma fórmula da margem do produto no catálogo.
+                .marginPct(ProductCostCalculator.computeMarginPct(item.getUnitPrice(), unitCost))
                 .observations(item.getObservations())
                 .insumos(insumos)
                 .extraIngredients(extraResponses)

@@ -56,6 +56,23 @@ public final class ProductCostCalculator {
                 && (inc.getId() == null || !excluded.contains(inc.getId())));
     }
 
+    /**
+     * Margem (%) sobre o preço de venda: {@code (price − unitCost) / price × 100}, com 2 casas.
+     * Fórmula única da margem de um produto — usada tanto no catálogo (margem do produto)
+     * quanto no item de pedido (margem realizada naquele pedido). {@code unitCost} nulo conta
+     * como zero. Retorna null quando {@code price} é nulo ou zero (margem indefinida).
+     */
+    public static BigDecimal computeMarginPct(BigDecimal price, BigDecimal unitCost) {
+        if (price == null || price.signum() == 0) {
+            return null;
+        }
+        BigDecimal cost = unitCost != null ? unitCost : BigDecimal.ZERO;
+        return price.subtract(cost)
+                .divide(price, 4, java.math.RoundingMode.HALF_UP)
+                .multiply(new BigDecimal("100"))
+                .setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
     private static BigDecimal sum(List<Include> includes, java.util.function.Predicate<Include> filter) {
         if (includes == null || includes.isEmpty()) {
             return BigDecimal.ZERO;

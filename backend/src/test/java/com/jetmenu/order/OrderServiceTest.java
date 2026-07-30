@@ -642,6 +642,43 @@ class OrderServiceTest {
         }
 
         @Test
+        @DisplayName("deve expor a margem real do item considerando os extras no custo")
+        void shouldExposeItemMarginPctIncludingExtras() {
+            OrderItemExtraIngredientRequest extra = OrderItemExtraIngredientRequest.builder()
+                    .ingredientId(ingredientId)
+                    .quantity(new BigDecimal("50"))
+                    .build();
+
+            OrderRequest requestWithExtra = OrderRequest.builder()
+                    .customerId(customerId)
+                    .items(List.of(OrderItemRequest.builder()
+                            .productId(productId)
+                            .quantity(2)
+                            .extraIngredients(List.of(extra))
+                            .build()))
+                    .build();
+
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(ingredientRepository.findByIdAndMerchantId(ingredientId, merchantId)).willReturn(Optional.of(ingredient));
+            given(orderRepository.save(any(Order.class))).willAnswer(invocation -> {
+                Order saved = invocation.getArgument(0);
+                saved.setId(orderId);
+                saved.getItems().forEach(i -> i.setId(UUID.randomUUID()));
+                return saved;
+            });
+            // unitCost = ficha técnica (12) + extra escolhido (50 × 0.10 = 5) = 17
+            given(orderCostCalculatorService.computeItemUnitCost(any(OrderItem.class), eq(merchantId)))
+                    .willReturn(new BigDecimal("17.00"));
+
+            OrderResponse response = orderService.create(merchantId, requestWithExtra);
+
+            // (30.00 − 17.00) / 30.00 × 100 = 43.3333… → 43.33
+            assertThat(response.getItems().get(0).getMarginPct())
+                    .isEqualByComparingTo(new BigDecimal("43.33"));
+        }
+
+        @Test
         @DisplayName("deve suportar costPerUnit com 4 casas decimais sem perder precisão")
         void shouldSupportFourDecimalCostPerUnit() {
             Ingredient fineIngredient = Ingredient.builder()
@@ -853,6 +890,42 @@ class OrderServiceTest {
             OrderResponse result = orderService.findById(merchantId, orderId);
 
             assertThat(result.getItems().get(0).getUnmatchedSubItems()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("deve calcular a margem real do item como (unitPrice - unitCost) / unitPrice x 100")
+        void shouldComputeItemMarginPctFromUnitPriceAndUnitCost() {
+            given(orderCostCalculatorService.computeItemUnitCost(any(OrderItem.class), eq(merchantId)))
+                    .willReturn(new BigDecimal("12.00"));
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.findById(merchantId, orderId);
+
+            // (30.00 − 12.00) / 30.00 × 100 = 60.00
+            assertThat(result.getItems().get(0).getMarginPct())
+                    .isEqualByComparingTo(new BigDecimal("60.00"));
+        }
+
+        @Test
+        @DisplayName("deve retornar margem real nula quando o item não tem preço unitário")
+        void shouldReturnNullItemMarginPctWhenUnitPriceIsNull() {
+            order.getItems().get(0).setUnitPrice(null);
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.findById(merchantId, orderId);
+
+            assertThat(result.getItems().get(0).getMarginPct()).isNull();
+        }
+
+        @Test
+        @DisplayName("deve retornar margem real nula quando o preço unitário do item é zero (brinde)")
+        void shouldReturnNullItemMarginPctWhenUnitPriceIsZero() {
+            order.getItems().get(0).setUnitPrice(BigDecimal.ZERO);
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.findById(merchantId, orderId);
+
+            assertThat(result.getItems().get(0).getMarginPct()).isNull();
         }
 
         @Test

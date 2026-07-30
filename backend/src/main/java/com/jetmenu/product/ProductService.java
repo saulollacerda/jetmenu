@@ -10,7 +10,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.UUID;
 
 @Service
@@ -93,7 +92,7 @@ public class ProductService {
     private ProductResponse toResponse(Product product) {
         Category category = product.getCategory();
         BigDecimal unitCost = ProductCostCalculator.computeUnitCost(product.getIncludes());
-        BigDecimal marginPct = computeMarginPct(product.getPrice(), unitCost);
+        BigDecimal marginPct = ProductCostCalculator.computeMarginPct(product.getPrice(), unitCost);
         return ProductResponse.builder()
                 .id(product.getId())
                 .name(product.getName())
@@ -106,16 +105,5 @@ public class ProductService {
                 .targetMarginPct(product.getTargetMarginPct())
                 .origin(product.getOrigin())
                 .build();
-    }
-
-    private BigDecimal computeMarginPct(BigDecimal price, BigDecimal unitCost) {
-        if (price == null || price.signum() == 0) {
-            return null;
-        }
-        BigDecimal cost = unitCost != null ? unitCost : BigDecimal.ZERO;
-        return price.subtract(cost)
-                .divide(price, 4, RoundingMode.HALF_UP)
-                .multiply(new BigDecimal("100"))
-                .setScale(2, RoundingMode.HALF_UP);
     }
 }
