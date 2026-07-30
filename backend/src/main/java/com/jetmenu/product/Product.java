@@ -48,6 +48,13 @@ public class Product {
     @Column(nullable = false)
     private ProductStatus status;
 
+    /**
+     * Margem ideal (%) definida pelo lojista para este produto. Opcional: null significa
+     * "não acompanhada" — produtos existentes permanecem nulos e nada é retroativo.
+     */
+    @Column(name = "target_margin_pct", precision = 5, scale = 2)
+    private BigDecimal targetMarginPct;
+
     // columnDefinition default is required for dev (ddl-auto=update on non-empty tables);
     // prod relies on the matching Flyway migration.
     @Builder.Default

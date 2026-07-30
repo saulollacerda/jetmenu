@@ -124,6 +124,18 @@ export interface OrderItemResponse {
   excludedIncludeIds?: string[]
   /** Observação do cliente para este item ("sem granola"). Null quando não há. */
   observations?: string | null
+  /**
+   * Margem ideal (%) do produto copiada para o item quando o pedido foi criado (snapshot).
+   * Null em pedidos antigos e em produtos sem margem ideal — nunca é reescrita depois.
+   * Não confundir com o `marginPct` de `OrderResponse`, que é a margem do pedido inteiro.
+   */
+  targetMarginPct?: number | null
+  /**
+   * Margem (%) realmente obtida neste item, apurada pelo backend a partir de `unitPrice` e
+   * do `unitCost` resolvido (ficha técnica + extras). Null quando o item não tem preço.
+   * Exibir como veio — nunca recalcular no frontend.
+   */
+  marginPct?: number | null
 }
 
 export interface OrderRequest {

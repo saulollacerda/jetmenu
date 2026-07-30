@@ -46,6 +46,14 @@ public class OrderItem {
     private BigDecimal unitCost;
 
     /**
+     * Margem ideal (%) do produto no momento em que o item foi criado (snapshot).
+     * Null em pedidos anteriores ao recurso e em produtos sem margem ideal — nunca é
+     * reescrito quando o produto muda depois, para o histórico não mudar de alvo.
+     */
+    @Column(name = "target_margin_pct", precision = 5, scale = 2)
+    private BigDecimal targetMarginPct;
+
+    /**
      * Special instructions the customer wrote for this item ("sem cebola"), as imported from
      * the marketplace. Must be displayed on the order ticket (iFood Order homologation).
      * Null for manual orders and for imports without observations.

@@ -22,6 +22,20 @@ public class OrderItemResponse {
     private BigDecimal totalCost;
 
     /**
+     * Margem ideal (%) do produto gravada no item quando o pedido foi criado (snapshot).
+     * Nula em pedidos antigos e em produtos sem margem ideal cadastrada.
+     */
+    private BigDecimal targetMarginPct;
+
+    /**
+     * Margem (%) realmente obtida neste item do pedido: {@code (unitPrice − unitCost) /
+     * unitPrice × 100}, com o unitCost já incluindo ficha técnica e extras. Nula quando o
+     * item não tem preço unitário ou o preço é zero. A comparação com
+     * {@link #targetMarginPct} é feita pela UI.
+     */
+    private BigDecimal marginPct;
+
+    /**
      * Observação/instrução especial que o cliente escreveu para este item ("sem cebola").
      * Nula em pedidos manuais e em importações sem observação.
      */
