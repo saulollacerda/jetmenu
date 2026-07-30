@@ -1,5 +1,6 @@
 package com.jetmenu.billing;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,39 +24,50 @@ public class SubscriptionService {
      */
     private final DefaultPlanResolver defaultPlanResolver;
 
+    /** Length of the free trial granted on sign-up, in days. */
+    private final long trialDays;
+
     public SubscriptionService(SubscriptionRepository subscriptionRepository,
                                PlanRepository planRepository,
                                RevenueReportRepository revenueReportRepository,
                                InvoiceRepository invoiceRepository,
-                               DefaultPlanResolver defaultPlanResolver) {
+                               DefaultPlanResolver defaultPlanResolver,
+                               @Value("${app.billing.trial-days:14}") long trialDays) {
         this.subscriptionRepository = subscriptionRepository;
         this.planRepository = planRepository;
         this.revenueReportRepository = revenueReportRepository;
         this.invoiceRepository = invoiceRepository;
         this.defaultPlanResolver = defaultPlanResolver;
+        this.trialDays = trialDays;
     }
 
     /**
      * Creates the sign-up subscription for a merchant.
      *
-     * <p>By default (prod) the subscription has no plan and status PENDING, which the
-     * frontend treats as "choose a plan" — the merchant must pay before using the app.
+     * <p>By default (prod) the subscription has no plan and status TRIAL, with
+     * {@code trialEndsAt} set {@code app.billing.trial-days} days ahead (14 by default).
+     * This is what makes the landing page's "teste grátis" real: the merchant uses the
+     * whole product without paying, and the frontend gate only blocks once that date has
+     * passed. No period end is set — during the trial, access is governed by
+     * {@code trialEndsAt} alone.
      *
      * <p>When {@code app.billing.default-plan-name} is configured (dev only), the named
-     * plan is assigned with status ACTIVE and no period end, so a freshly registered dev
-     * account is immediately usable without going through billing. Assigning the plan
+     * plan is assigned with status ACTIVE, no trial and no period end, so a freshly
+     * registered dev account is immediately usable and never expires. Assigning the plan
      * alone would not be enough: the frontend gate keys off the status, not the plan.
-     * If the configured plan is missing, this degrades to the default behaviour.
+     * If the configured plan is missing, this degrades to the trial above.
      */
     @Transactional
     public void createPendingSubscription(UUID merchantId) {
         LocalDateTime now = LocalDateTime.now();
         Plan defaultPlan = defaultPlanResolver.resolve();
+        boolean trial = defaultPlan == null;
         Subscription subscription = Subscription.builder()
                 .merchantId(merchantId)
                 .plan(defaultPlan)
-                .status(defaultPlan != null ? SubscriptionStatus.ACTIVE : SubscriptionStatus.PENDING)
-                .currentPeriodStart(defaultPlan != null ? now : null)
+                .status(trial ? SubscriptionStatus.TRIAL : SubscriptionStatus.ACTIVE)
+                .trialEndsAt(trial ? now.plusDays(trialDays) : null)
+                .currentPeriodStart(now)
                 .createdAt(now)
                 .updatedAt(now)
                 .build();

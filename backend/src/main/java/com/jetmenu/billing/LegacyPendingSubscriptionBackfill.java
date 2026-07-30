@@ -32,6 +32,12 @@ import java.util.stream.Collectors;
  * subscription at startup. Production has no default plan, so the PENDING behaviour is
  * unchanged there.
  *
+ * <p>Deliberately <em>not</em> TRIAL: unlike
+ * {@link SubscriptionService#createPendingSubscription}, this does not hand a free trial
+ * to merchants who have been using the system for months — the trial is a sign-up
+ * incentive, not a retroactive grant. Merchants that already have a subscription (TRIAL
+ * included) are never touched, so a running trial cannot be duplicated or overwritten.
+ *
  * <p>Runs after {@link BasicPlanSeeder} (see {@link Order}), which seeds that plan.
  */
 @Component

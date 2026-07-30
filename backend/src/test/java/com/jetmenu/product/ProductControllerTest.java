@@ -129,6 +129,81 @@ class ProductControllerTest {
         }
 
         @Test
+        @DisplayName("deve retornar 201 e ecoar targetMarginPct quando margem ideal é informada")
+        void shouldReturn201WithTargetMarginPct() throws Exception {
+            ProductRequest withTarget = ProductRequest.builder()
+                    .name("X-Burguer")
+                    .price(new BigDecimal("25.90"))
+                    .categoryId(categoryId)
+                    .targetMarginPct(new BigDecimal("55.00"))
+                    .build();
+            productResponse.setTargetMarginPct(new BigDecimal("55.00"));
+            given(productService.create(any(), any(ProductRequest.class))).willReturn(productResponse);
+
+            mockMvc.perform(post("/api/products")
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(withTarget)))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.targetMarginPct").value(55.00));
+        }
+
+        @Test
+        @DisplayName("deve retornar 400 quando targetMarginPct é maior que 100")
+        void shouldReturn400WhenTargetMarginPctAboveHundred() throws Exception {
+            ProductRequest invalid = ProductRequest.builder()
+                    .name("X-Burguer")
+                    .price(new BigDecimal("25.90"))
+                    .categoryId(categoryId)
+                    .targetMarginPct(new BigDecimal("100.01"))
+                    .build();
+
+            mockMvc.perform(post("/api/products")
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(invalid)))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        @DisplayName("deve retornar 400 quando targetMarginPct é negativa")
+        void shouldReturn400WhenTargetMarginPctNegative() throws Exception {
+            ProductRequest invalid = ProductRequest.builder()
+                    .name("X-Burguer")
+                    .price(new BigDecimal("25.90"))
+                    .categoryId(categoryId)
+                    .targetMarginPct(new BigDecimal("-0.01"))
+                    .build();
+
+            mockMvc.perform(post("/api/products")
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(invalid)))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        @DisplayName("deve aceitar targetMarginPct nos limites 0 e 100")
+        void shouldAcceptTargetMarginPctBoundaries() throws Exception {
+            given(productService.create(any(), any(ProductRequest.class))).willReturn(productResponse);
+
+            for (String value : List.of("0", "100")) {
+                ProductRequest boundary = ProductRequest.builder()
+                        .name("X-Burguer")
+                        .price(new BigDecimal("25.90"))
+                        .categoryId(categoryId)
+                        .targetMarginPct(new BigDecimal(value))
+                        .build();
+
+                mockMvc.perform(post("/api/products")
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(boundary)))
+                        .andExpect(status().isCreated());
+            }
+        }
+
+        @Test
         @DisplayName("deve retornar 409 quando nome já está em uso")
         void shouldReturn409WhenNameAlreadyInUse() throws Exception {
             given(productService.create(any(), any(ProductRequest.class)))

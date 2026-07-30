@@ -155,6 +155,23 @@ class IfoodOrderImportServiceTest {
         }
 
         @Test
+        @DisplayName("deve gravar no item a margem ideal do produto (snapshot na importação)")
+        void shouldSnapshotProductTargetMarginPctOnImportedItem() {
+            product.setTargetMarginPct(new BigDecimal("48.00"));
+            given(productRepository.findByExternalIdAndMerchantId("PDV-1", merchantId))
+                    .willReturn(Optional.of(product));
+            given(orderRepository.existsByExternalOrderIdAndMerchantId("ord-1", merchantId))
+                    .willReturn(false);
+
+            importService.importOrder(baseDetail(), OrderStatus.PAID, RAW_JSON);
+
+            then(orderRepository).should().save(argThat((Order o) ->
+                    o.getItems().get(0).getTargetMarginPct() != null
+                            && new BigDecimal("48.00")
+                                    .compareTo(o.getItems().get(0).getTargetMarginPct()) == 0));
+        }
+
+        @Test
         @DisplayName("deve pular pedido com category diferente de FOOD")
         void shouldSkipNonFoodCategory() {
             IfoodOrderDetailResponse detail = baseDetail();

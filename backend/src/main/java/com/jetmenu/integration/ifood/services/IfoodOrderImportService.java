@@ -394,6 +394,8 @@ public class IfoodOrderImportService {
                     .quantity(remoteItem.getQuantity() != null ? remoteItem.getQuantity().intValue() : 1)
                     .unitPrice(remoteItem.getUnitPrice() != null ? remoteItem.getUnitPrice() : BigDecimal.ZERO)
                     .unitCost(unitCost)
+                    // Snapshot da margem ideal vigente no produto no momento da importação.
+                    .targetMarginPct(product.getTargetMarginPct())
                     .observations(remoteItem.getObservations())
                     .build();
 

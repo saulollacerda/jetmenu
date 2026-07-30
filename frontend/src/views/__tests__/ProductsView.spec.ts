@@ -52,6 +52,7 @@ describe('ProductsView', () => {
           status: 'ACTIVE',
           categoryId: 'cat1',
           categoryName: 'Bebidas',
+          targetMarginPct: 55,
         },
       ],
       includes: [],
@@ -119,6 +120,129 @@ describe('ProductsView', () => {
       name: 'X-Burguer',
       price: 25.9,
       categoryId: 'cat2',
+      targetMarginPct: null,
+    })
+  })
+
+  describe('target margin', () => {
+    it('should send the target margin when creating a product', async () => {
+      const wrapper = mount(ProductsView)
+
+      await wrapper.get('[data-testid="new-product-button"]').trigger('click')
+      await wrapper.get('[data-testid="product-name-input"]').setValue('X-Burguer')
+      await wrapper.get('[data-testid="product-price-input"]').setValue('25.9')
+      await wrapper.get('[data-testid="product-category-select"]').setValue('cat2')
+      await wrapper.get('[data-testid="product-target-margin-input"]').setValue('60')
+
+      await wrapper.get('[data-testid="product-form"]').trigger('submit')
+      await flushPromises()
+
+      expect(productStoreMock.create).toHaveBeenCalledWith({
+        name: 'X-Burguer',
+        price: 25.9,
+        categoryId: 'cat2',
+        targetMarginPct: 60,
+      })
+    })
+
+    it('should prefill the target margin of the product being edited', async () => {
+      const wrapper = mount(ProductsView)
+
+      await wrapper.get('[data-testid="product-p1-edit-button"]').trigger('click')
+
+      const input = wrapper.get('[data-testid="product-target-margin-input"]')
+        .element as HTMLInputElement
+      expect(input.value).toBe('55')
+    })
+
+    it('should preserve the stored target margin when editing an unrelated field', async () => {
+      const wrapper = mount(ProductsView)
+
+      await wrapper.get('[data-testid="product-p1-edit-button"]').trigger('click')
+      await wrapper.get('[data-testid="product-name-input"]').setValue('Açaí 500ml')
+
+      await wrapper.get('[data-testid="product-form"]').trigger('submit')
+      await flushPromises()
+
+      // update() overwrites targetMarginPct unconditionally on the backend, so the
+      // payload must always carry it — omitting it would silently clear the target.
+      expect(productStoreMock.update).toHaveBeenCalledWith('p1', {
+        name: 'Açaí 500ml',
+        price: 20,
+        categoryId: 'cat1',
+        targetMarginPct: 55,
+      })
+    })
+
+    it('should send null when the merchant clears the target margin', async () => {
+      const wrapper = mount(ProductsView)
+
+      await wrapper.get('[data-testid="product-p1-edit-button"]').trigger('click')
+      await wrapper.get('[data-testid="product-target-margin-input"]').setValue('')
+
+      await wrapper.get('[data-testid="product-form"]').trigger('submit')
+      await flushPromises()
+
+      expect(productStoreMock.update).toHaveBeenCalledWith('p1', {
+        name: 'Açaí 330ml',
+        price: 20,
+        categoryId: 'cat1',
+        targetMarginPct: null,
+      })
+    })
+
+    it('should keep a zero target margin instead of treating it as empty', async () => {
+      const wrapper = mount(ProductsView)
+
+      await wrapper.get('[data-testid="product-p1-edit-button"]').trigger('click')
+      await wrapper.get('[data-testid="product-target-margin-input"]').setValue('0')
+
+      await wrapper.get('[data-testid="product-form"]').trigger('submit')
+      await flushPromises()
+
+      expect(productStoreMock.update.mock.calls[0][1].targetMarginPct).toBe(0)
+    })
+
+    it('should not submit when the target margin is above 100', async () => {
+      const wrapper = mount(ProductsView)
+
+      await wrapper.get('[data-testid="product-p1-edit-button"]').trigger('click')
+      await wrapper.get('[data-testid="product-target-margin-input"]').setValue('120')
+
+      await wrapper.get('[data-testid="product-form"]').trigger('submit')
+      await flushPromises()
+
+      expect(productStoreMock.update).not.toHaveBeenCalled()
+      expect(wrapper.get('[data-testid="product-target-margin-error"]').text()).toContain(
+        'entre 0 e 100',
+      )
+    })
+
+    it('should not submit when the target margin is negative', async () => {
+      const wrapper = mount(ProductsView)
+
+      await wrapper.get('[data-testid="product-p1-edit-button"]').trigger('click')
+      await wrapper.get('[data-testid="product-target-margin-input"]').setValue('-5')
+
+      await wrapper.get('[data-testid="product-form"]').trigger('submit')
+      await flushPromises()
+
+      expect(productStoreMock.update).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="product-target-margin-error"]').exists()).toBe(true)
+    })
+
+    it('should start the create form with an empty target margin', async () => {
+      const wrapper = mount(ProductsView)
+
+      await wrapper.get('[data-testid="product-p1-edit-button"]').trigger('click')
+      await wrapper.get('[data-testid="product-form"]').trigger('submit')
+      await flushPromises()
+
+      await wrapper.get('[data-testid="new-product-button"]').trigger('click')
+
+      const input = wrapper.get('[data-testid="product-target-margin-input"]')
+        .element as HTMLInputElement
+      expect(input.value).toBe('')
     })
   })
 

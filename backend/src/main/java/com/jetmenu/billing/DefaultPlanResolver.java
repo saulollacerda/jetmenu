@@ -42,7 +42,7 @@ class DefaultPlanResolver {
         }
         return planRepository.findByName(defaultPlanName)
                 .orElseGet(() -> {
-                    log.warn("Plano padrão '{}' não encontrado — assinaturas seguem sem plano (PENDING)",
+                    log.warn("Plano padrão '{}' não encontrado — assinaturas seguem sem plano (teste grátis)",
                             defaultPlanName);
                     return null;
                 });

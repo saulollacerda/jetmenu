@@ -111,6 +111,8 @@ public class AnotaAIOrderImportService {
                         .quantity(remoteItem.getQuantity())
                         .unitPrice(BigDecimal.valueOf(remoteItem.getPrice()))
                         .unitCost(unitCost)
+                        // Snapshot da margem ideal vigente no produto no momento da importação.
+                        .targetMarginPct(product.getTargetMarginPct())
                         .build();
                 com.jetmenu.order.ResolvedSubItems resolved = extraIngredientResolver.resolve(
                         remoteItem.getSubItems(), productIncludes, merchantId, missingIngredientNames);

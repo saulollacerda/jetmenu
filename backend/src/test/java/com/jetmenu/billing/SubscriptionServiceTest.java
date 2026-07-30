@@ -36,15 +36,22 @@ class SubscriptionServiceTest {
 
     private UUID merchantId;
 
+    /** Mirrors the default of {@code app.billing.trial-days}. */
+    private static final long DEFAULT_TRIAL_DAYS = 14;
+
     @BeforeEach
     void setUp() {
         merchantId = UUID.randomUUID();
         // No default plan configured — this is the prod-like setup, where sign-up
-        // must always produce a plan-less PENDING subscription.
+        // must grant the free trial.
         subscriptionService = serviceWithDefaultPlanName(null);
     }
 
     private SubscriptionService serviceWithDefaultPlanName(String defaultPlanName) {
+        return serviceWith(defaultPlanName, DEFAULT_TRIAL_DAYS);
+    }
+
+    private SubscriptionService serviceWith(String defaultPlanName, long trialDays) {
         // The real resolver is used on purpose: it reads the mocked PlanRepository, so the
         // "must not look the plan up" assertions below stay just as strict as before.
         return new SubscriptionService(
@@ -52,7 +59,8 @@ class SubscriptionServiceTest {
                 planRepository,
                 revenueReportRepository,
                 invoiceRepository,
-                new DefaultPlanResolver(planRepository, defaultPlanName));
+                new DefaultPlanResolver(planRepository, defaultPlanName),
+                trialDays);
     }
 
     // -------------------------------------------------------------------------
@@ -64,19 +72,51 @@ class SubscriptionServiceTest {
     class CreatePendingSubscription {
 
         @Test
-        @DisplayName("deve criar subscription com status PENDING, sem plano e sem trial")
-        void shouldCreatePendingSubscription() {
-            given(subscriptionRepository.save(any(Subscription.class)))
+        @DisplayName("deve criar subscription em TRIAL, sem plano, com 14 dias de teste grátis")
+        void shouldCreateTrialSubscription() {
+            ArgumentCaptor<Subscription> captor = ArgumentCaptor.forClass(Subscription.class);
+            LocalDateTime before = LocalDateTime.now();
+            given(subscriptionRepository.save(captor.capture()))
                     .willAnswer(inv -> inv.getArgument(0));
 
             subscriptionService.createPendingSubscription(merchantId);
 
-            then(subscriptionRepository).should().save(argThat(sub ->
-                    merchantId.equals(sub.getMerchantId())
-                            && SubscriptionStatus.PENDING.equals(sub.getStatus())
-                            && sub.getTrialEndsAt() == null
-                            && sub.getPlan() == null
-            ));
+            Subscription saved = captor.getValue();
+            assertThat(saved.getMerchantId()).isEqualTo(merchantId);
+            assertThat(saved.getStatus()).isEqualTo(SubscriptionStatus.TRIAL);
+            assertThat(saved.getPlan()).isNull();
+            assertThat(saved.getTrialEndsAt())
+                    .isAfterOrEqualTo(before.plusDays(DEFAULT_TRIAL_DAYS))
+                    .isBeforeOrEqualTo(LocalDateTime.now().plusDays(DEFAULT_TRIAL_DAYS));
+        }
+
+        @Test
+        @DisplayName("não deve definir fim de período, pois o acesso durante o teste é regido por trialEndsAt")
+        void shouldNotSetPeriodEndOnTrial() {
+            ArgumentCaptor<Subscription> captor = ArgumentCaptor.forClass(Subscription.class);
+            given(subscriptionRepository.save(captor.capture()))
+                    .willAnswer(inv -> inv.getArgument(0));
+
+            subscriptionService.createPendingSubscription(merchantId);
+
+            assertThat(captor.getValue().getCurrentPeriodStart()).isNotNull();
+            assertThat(captor.getValue().getCurrentPeriodEnd()).isNull();
+        }
+
+        @Test
+        @DisplayName("deve respeitar a duração do teste configurada em app.billing.trial-days")
+        void shouldHonourConfiguredTrialLength() {
+            subscriptionService = serviceWith(null, 7);
+            ArgumentCaptor<Subscription> captor = ArgumentCaptor.forClass(Subscription.class);
+            LocalDateTime before = LocalDateTime.now();
+            given(subscriptionRepository.save(captor.capture()))
+                    .willAnswer(inv -> inv.getArgument(0));
+
+            subscriptionService.createPendingSubscription(merchantId);
+
+            assertThat(captor.getValue().getTrialEndsAt())
+                    .isAfterOrEqualTo(before.plusDays(7))
+                    .isBeforeOrEqualTo(LocalDateTime.now().plusDays(7));
         }
 
         @Test
@@ -105,8 +145,8 @@ class SubscriptionServiceTest {
         }
 
         @Test
-        @DisplayName("deve manter plano nulo e status PENDING quando a propriedade está em branco")
-        void shouldKeepPendingWhenPropertyIsBlank() {
+        @DisplayName("deve manter plano nulo e status TRIAL quando a propriedade está em branco")
+        void shouldKeepTrialWhenPropertyIsBlank() {
             subscriptionService = serviceWithDefaultPlanName("   ");
             given(subscriptionRepository.save(any(Subscription.class)))
                     .willAnswer(inv -> inv.getArgument(0));
@@ -116,7 +156,8 @@ class SubscriptionServiceTest {
             then(planRepository).should(never()).findByName(anyString());
             then(subscriptionRepository).should().save(argThat(sub ->
                     sub.getPlan() == null
-                            && SubscriptionStatus.PENDING.equals(sub.getStatus())
+                            && SubscriptionStatus.TRIAL.equals(sub.getStatus())
+                            && sub.getTrialEndsAt() != null
             ));
         }
     }
@@ -147,7 +188,7 @@ class SubscriptionServiceTest {
         }
 
         @Test
-        @DisplayName("deve atribuir o plano Básico com status ACTIVE para uso imediato")
+        @DisplayName("deve atribuir o plano Básico com status ACTIVE, sem teste grátis, para uso imediato")
         void shouldAssignDefaultPlanAsActive() {
             given(planRepository.findByName(BASIC_PLAN_NAME)).willReturn(Optional.of(basicPlan));
             given(subscriptionRepository.save(any(Subscription.class)))
@@ -177,8 +218,8 @@ class SubscriptionServiceTest {
         }
 
         @Test
-        @DisplayName("deve degradar para plano nulo e PENDING quando o plano configurado não existe")
-        void shouldFallBackToPendingWhenConfiguredPlanIsMissing() {
+        @DisplayName("deve degradar para o teste grátis quando o plano configurado não existe")
+        void shouldFallBackToTrialWhenConfiguredPlanIsMissing() {
             given(planRepository.findByName(BASIC_PLAN_NAME)).willReturn(Optional.empty());
             given(subscriptionRepository.save(any(Subscription.class)))
                     .willAnswer(inv -> inv.getArgument(0));
@@ -187,7 +228,8 @@ class SubscriptionServiceTest {
 
             then(subscriptionRepository).should().save(argThat(sub ->
                     sub.getPlan() == null
-                            && SubscriptionStatus.PENDING.equals(sub.getStatus())
+                            && SubscriptionStatus.TRIAL.equals(sub.getStatus())
+                            && sub.getTrialEndsAt() != null
             ));
         }
     }

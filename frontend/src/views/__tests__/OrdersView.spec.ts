@@ -82,6 +82,7 @@ vi.mock('@/services/ifoodOrderActionService', async (importOriginal) => {
 })
 
 import OrdersView from '@/views/OrdersView.vue'
+import { UI } from '@/design'
 
 const showToastMock = vi.fn()
 vi.mock('@/composables/useToast', () => ({
@@ -1662,6 +1663,89 @@ describe('OrdersView', () => {
       await flushPromises()
 
       expect(orderStoreMock.fetchPage).toHaveBeenCalled()
+    })
+  })
+
+  describe('item target margin indicator', () => {
+    // O style inline é normalizado para rgb() pelo jsdom.
+    function rgb(hex: string): string {
+      const n = parseInt(hex.slice(1), 16)
+      return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`
+    }
+
+    function orderWithItem(item: Record<string, unknown>) {
+      return {
+        id: 'o1',
+        dateTime: '2026-05-14T10:00:00',
+        customerId: 'c1',
+        customerName: 'João',
+        status: 'PAID',
+        totalValue: 30,
+        estimatedProfit: 13,
+        marginPct: 43.3,
+        items: [
+          {
+            id: 'oi1',
+            productId: 'p1',
+            productName: 'Hambúrguer',
+            quantity: 1,
+            unitPrice: 30,
+            unitCost: 17,
+            totalCost: 17,
+            ...item,
+          },
+        ],
+      }
+    }
+
+    async function openDetail(order: Record<string, unknown>) {
+      orderStoreMock.items = [order]
+      const wrapper = mount(OrdersView)
+      await wrapper.get('[data-testid="order-o1-detail-button"]').trigger('click')
+      await flushPromises()
+      return wrapper.get('[data-testid="order-detail-modal"]')
+    }
+
+    it('should render nothing when the item has no target margin snapshot', async () => {
+      const detail = await openDetail(orderWithItem({ targetMarginPct: null, marginPct: 43.3 }))
+
+      expect(detail.find('[data-testid="item-oi1-margin"]').exists()).toBe(false)
+    })
+
+    it('should render nothing when the backend could not compute the realised margin', async () => {
+      const detail = await openDetail(orderWithItem({ targetMarginPct: 60, marginPct: null }))
+
+      expect(detail.find('[data-testid="item-oi1-margin"]').exists()).toBe(false)
+    })
+
+    it('should show the realised margin next to the target', async () => {
+      const detail = await openDetail(orderWithItem({ targetMarginPct: 60, marginPct: 43.33 }))
+
+      expect(detail.get('[data-testid="item-oi1-margin"]').text()).toBe('Margem 43,3% · meta 60,0%')
+    })
+
+    it('should paint the indicator red when the item came out below its target', async () => {
+      const detail = await openDetail(orderWithItem({ targetMarginPct: 60, marginPct: 43.3 }))
+
+      expect(detail.get('[data-testid="item-oi1-margin"]').attributes('style')).toContain(
+        `color: ${rgb(UI.rose)}`,
+      )
+    })
+
+    it('should paint the indicator green when the item came out above its target', async () => {
+      const detail = await openDetail(orderWithItem({ targetMarginPct: 40, marginPct: 43.3 }))
+
+      expect(detail.get('[data-testid="item-oi1-margin"]').attributes('style')).toContain(
+        `color: ${rgb(UI.emerald2)}`,
+      )
+    })
+
+    it('should paint the indicator neutral grey when the item hit its target exactly', async () => {
+      const detail = await openDetail(orderWithItem({ targetMarginPct: 43.3, marginPct: 43.3 }))
+
+      expect(detail.get('[data-testid="item-oi1-margin"]').attributes('style')).toContain(
+        `color: ${rgb(UI.textMute)}`,
+      )
     })
   })
 })

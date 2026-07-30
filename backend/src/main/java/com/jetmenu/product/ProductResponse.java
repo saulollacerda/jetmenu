@@ -20,5 +20,9 @@ public class ProductResponse {
     private String categoryName;
     private BigDecimal unitCost;
     private BigDecimal marginPct;
+
+    /** Margem ideal (%) cadastrada no produto. Null quando o lojista não a definiu. */
+    private BigDecimal targetMarginPct;
+
     private CatalogOrigin origin;
 }
