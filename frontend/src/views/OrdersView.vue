@@ -309,9 +309,39 @@ function timeOf(iso: string): string {
  * (totalValue - deliveryFee) — a mesma base do lucro. Null quando o backend não
  * consegue apurá-la (subtotal zero); nesse caso não exibimos 0%, que enganaria.
  */
+function marginPct(v: number | string): string {
+  return Number(v).toFixed(1).replace('.', ',') + '%'
+}
 function marginLabel(o: OrderResponse): string {
   if (o.marginPct == null) return '—'
-  return Number(o.marginPct).toFixed(1).replace('.', ',') + '%'
+  return marginPct(o.marginPct)
+}
+
+/** Como a margem realizada do item se saiu contra a margem ideal gravada nele. */
+type ItemMarginStatus = 'below' | 'above' | 'equal'
+
+/**
+ * Null quando não há o que comparar: o produto não acompanha margem ideal (a maioria dos
+ * itens) ou o backend não apurou a margem do item. Nesses casos nada é exibido — o painel
+ * não deve ganhar ruído visual.
+ */
+function itemMarginStatus(item: OrderItemResponse): ItemMarginStatus | null {
+  if (item.targetMarginPct == null || item.marginPct == null) return null
+  const realised = Number(item.marginPct)
+  const target = Number(item.targetMarginPct)
+  if (realised < target) return 'below'
+  if (realised > target) return 'above'
+  return 'equal'
+}
+function itemMarginColor(item: OrderItemResponse): string {
+  const status = itemMarginStatus(item)
+  if (status === 'below') return UI.rose
+  if (status === 'above') return UI.emerald2
+  return UI.textMute
+}
+/** Mostra a margem apurada e a meta juntas, para o número significar alguma coisa. */
+function itemMarginLabel(item: OrderItemResponse): string {
+  return `Margem ${marginPct(item.marginPct!)} · meta ${marginPct(item.targetMarginPct!)}`
 }
 
 /**
@@ -1767,6 +1797,18 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
                   <div :style="{ fontSize: '11px', color: UI.textMute }">
                     Qtd. {{ item.quantity }} · Unit. {{ brl(Number(item.unitPrice)) }} · Custo
                     {{ brl(Number(item.unitCost)) }}
+                  </div>
+                  <div
+                    v-if="itemMarginStatus(item)"
+                    :data-testid="`item-${item.id}-margin`"
+                    :style="{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      marginTop: '2px',
+                      color: itemMarginColor(item),
+                    }"
+                  >
+                    {{ itemMarginLabel(item) }}
                   </div>
                 </div>
                 <div style="text-align: right">
