@@ -3,9 +3,6 @@ package com.jetmenu.integration.stripe;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.util.StringUtils;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
-
 /**
  * Stripe configuration. <b>Sandbox and production differ by these VALUES ONLY</b> — the same
  * code path runs in both, so switching environments never requires a code or schema change:
@@ -16,12 +13,15 @@ import java.util.Map;
  *   <tr><td>{@code stripe.api-key}</td><td>{@code sk_test_…}</td><td>{@code sk_live_…}</td></tr>
  *   <tr><td>{@code stripe.webhook-secret}</td><td>{@code whsec_…} (test endpoint)</td>
  *       <td>{@code whsec_…} (live endpoint)</td></tr>
- *   <tr><td>{@code stripe.price-ids.*}</td><td>{@code price_…} created in test mode</td>
- *       <td>{@code price_…} created in live mode</td></tr>
  * </table>
  *
- * All three default to empty so the application still boots unconfigured; checkout then
- * answers 503 with a pt-BR ProblemDetail instead of failing with a 500.
+ * Both default to empty so the application still boots unconfigured; checkout then answers 503
+ * with a pt-BR ProblemDetail instead of failing with a 500.
+ * <p>
+ * There is deliberately no price id here any more. Plans and their prices are created in the
+ * Stripe dashboard and mirrored into {@code plans} by {@link StripeCatalogSync}, so adding a
+ * plan costs no property, no environment variable and no deploy — and the amount charged
+ * cannot drift from the amount displayed, because only one of them is written by hand.
  */
 @ConfigurationProperties(prefix = "stripe")
 public class StripeProperties {
@@ -31,17 +31,6 @@ public class StripeProperties {
 
     /** Signing secret ({@code whsec_…}) of the webhook endpoint, used to verify callbacks. */
     private String webhookSecret = "";
-
-    /**
-     * JetMenu plan → Stripe recurring Price id, keyed by the plan's unaccented slug
-     * (plan {@code "Básico"} → key {@code basico}, see {@link StripePriceResolver#slugify}).
-     * <p>
-     * Deliberately configuration and not a database column: the operator pastes
-     * {@code STRIPE_PRICE_<SLUG>} values into the environment, with no migration and no rows
-     * to insert. An unaccented key also sidesteps the ISO-8859-1 encoding of
-     * {@code .properties} files.
-     */
-    private Map<String, String> priceIds = new LinkedHashMap<>();
 
     /** {@code false} when {@code STRIPE_API_KEY} is empty — checkout must answer 503. */
     public boolean isConfigured() {
@@ -67,13 +56,5 @@ public class StripeProperties {
 
     public void setWebhookSecret(String webhookSecret) {
         this.webhookSecret = webhookSecret;
-    }
-
-    public Map<String, String> getPriceIds() {
-        return priceIds;
-    }
-
-    public void setPriceIds(Map<String, String> priceIds) {
-        this.priceIds = priceIds;
     }
 }

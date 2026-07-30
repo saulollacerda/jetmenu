@@ -12,59 +12,55 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Plan → Stripe Price resolution comes from configuration, never from a database column:
- * the operator pastes {@code STRIPE_PRICE_<SLUG>} values in and nothing needs a migration.
+ * The Stripe Price of a plan is stored on the plan, mirrored from the Stripe catalog — not
+ * configured per environment and not derived from the plan's display name.
  */
 @DisplayName("StripePriceResolver")
 class StripePriceResolverTest {
 
-    private StripeProperties properties;
     private StripePriceResolver resolver;
 
     @BeforeEach
     void setUp() {
-        properties = new StripeProperties();
-        resolver = new StripePriceResolver(properties);
+        resolver = new StripePriceResolver();
     }
 
-    private Plan plan(String name) {
+    private Plan plan(String name, String slug, String stripePriceId) {
         return Plan.builder()
                 .name(name)
+                .slug(slug)
+                .stripePriceId(stripePriceId)
                 .minRevenue(BigDecimal.ZERO)
-                .priceMonthly(new BigDecimal("50.00"))
+                .priceMonthly(new BigDecimal("70.00"))
                 .build();
     }
 
     @Test
-    @DisplayName("deve resolver o price id configurado para o plano 'Básico' pelo slug sem acento")
-    void shouldResolveConfiguredPriceIdByUnaccentedSlug() {
-        properties.getPriceIds().put("basico", "price_123");
-
-        assertThat(resolver.resolvePriceId(plan("Básico"))).isEqualTo("price_123");
+    @DisplayName("deve devolver o price id sincronizado no plano")
+    void shouldReturnTheSyncedPriceId() {
+        assertThat(resolver.resolvePriceId(plan("Básico", "basico", "price_123")))
+                .isEqualTo("price_123");
     }
 
     @Test
-    @DisplayName("deve gerar slug sem acento, em minúsculas e com hífens")
-    void shouldSlugifyPlanName() {
-        assertThat(StripePriceResolver.slugify("Básico")).isEqualTo("basico");
-        assertThat(StripePriceResolver.slugify("Plano Avançado")).isEqualTo("plano-avancado");
-        assertThat(StripePriceResolver.slugify("  Básico  ")).isEqualTo("basico");
+    @DisplayName("deve continuar resolvendo depois de o plano ser renomeado")
+    void shouldKeepResolvingAfterPlanIsRenamed() {
+        assertThat(resolver.resolvePriceId(plan("Essencial", "basico", "price_123")))
+                .isEqualTo("price_123");
     }
 
     @Test
-    @DisplayName("deve falhar com 503 em pt-BR quando o plano não tem price id configurado")
-    void shouldFailWhenPlanHasNoConfiguredPriceId() {
-        assertThatThrownBy(() -> resolver.resolvePriceId(plan("Básico")))
+    @DisplayName("deve falhar com 503 em pt-BR quando o plano não foi sincronizado")
+    void shouldFailWhenPlanWasNeverSynced() {
+        assertThatThrownBy(() -> resolver.resolvePriceId(plan("Básico", "basico", null)))
                 .isInstanceOf(BillingProviderUnavailableException.class)
                 .hasMessageContaining("Básico");
     }
 
     @Test
-    @DisplayName("deve tratar price id em branco como não configurado (env var vazia)")
+    @DisplayName("deve tratar price id em branco como ausente")
     void shouldTreatBlankPriceIdAsMissing() {
-        properties.getPriceIds().put("basico", "   ");
-
-        assertThatThrownBy(() -> resolver.resolvePriceId(plan("Básico")))
+        assertThatThrownBy(() -> resolver.resolvePriceId(plan("Básico", "basico", "   ")))
                 .isInstanceOf(BillingProviderUnavailableException.class);
     }
 }

@@ -58,13 +58,12 @@ class StripeBillingProviderTest {
     void setUp() {
         properties = new StripeProperties();
         properties.setApiKey("sk_test_dummy");
-        properties.getPriceIds().put("basico", "price_basico_123");
 
         provider = new StripeBillingProvider(
                 properties,
                 merchantRepository,
                 planRepository,
-                new StripePriceResolver(properties),
+                new StripePriceResolver(),
                 checkoutGateway,
                 FRONTEND_BASE_URL);
 
@@ -80,8 +79,10 @@ class StripeBillingProviderTest {
         plan = Plan.builder()
                 .id(planId)
                 .name("Básico")
+                .slug("basico")
+                .stripePriceId("price_basico_123")
                 .minRevenue(BigDecimal.ZERO)
-                .priceMonthly(new BigDecimal("50.00"))
+                .priceMonthly(new BigDecimal("70.00"))
                 .build();
 
         given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
@@ -203,9 +204,9 @@ class StripeBillingProviderTest {
 
         @Test
         @DisplayName("deve lançar BillingProviderUnavailableException (503), nunca sucesso silencioso, "
-                + "quando o plano não tem price id configurado")
+                + "quando o plano não foi sincronizado com o catálogo da Stripe")
         void shouldThrowWhenPlanHasNoConfiguredPrice() {
-            properties.getPriceIds().clear();
+            plan.setStripePriceId(null);
 
             assertThatThrownBy(() -> provider.createCheckout(merchantId, planId))
                     .isInstanceOf(BillingProviderUnavailableException.class);
