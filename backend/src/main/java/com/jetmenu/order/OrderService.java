@@ -237,6 +237,9 @@ public class OrderService {
                     .quantity(itemRequest.getQuantity())
                     .unitPrice(product.getPrice())
                     .unitCost(unitCost)
+                    // Snapshot da margem ideal: o item conserva o alvo vigente no produto
+                    // quando o pedido foi feito, mesmo que o produto mude depois.
+                    .targetMarginPct(product.getTargetMarginPct())
                     .excludedIncludeIds(excludedIncludeIds)
                     .build();
 
@@ -640,6 +643,7 @@ public class OrderService {
                 .unitPrice(item.getUnitPrice())
                 .unitCost(unitCost)
                 .totalCost(totalCost)
+                .targetMarginPct(item.getTargetMarginPct())
                 .observations(item.getObservations())
                 .insumos(insumos)
                 .extraIngredients(extraResponses)

@@ -303,6 +303,35 @@ class OrderServiceTest {
         }
 
         @Test
+        @DisplayName("deve gravar no item a margem ideal do produto (snapshot no momento da criação)")
+        void shouldSnapshotProductTargetMarginPctOnItem() {
+            product.setTargetMarginPct(new BigDecimal("55.00"));
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(orderRepository.save(any(Order.class))).willReturn(order);
+
+            orderService.create(merchantId, orderRequest);
+
+            then(orderRepository).should().save(argThat(saved ->
+                    saved.getItems().get(0).getTargetMarginPct() != null
+                            && saved.getItems().get(0).getTargetMarginPct()
+                                    .compareTo(new BigDecimal("55.00")) == 0));
+        }
+
+        @Test
+        @DisplayName("deve gravar margem ideal nula no item quando o produto não tem margem ideal")
+        void shouldSnapshotNullTargetMarginPctWhenProductHasNone() {
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(orderRepository.save(any(Order.class))).willReturn(order);
+
+            orderService.create(merchantId, orderRequest);
+
+            then(orderRepository).should().save(argThat(saved ->
+                    saved.getItems().get(0).getTargetMarginPct() == null));
+        }
+
+        @Test
         @DisplayName("deve computar unitCost só com insumos (PACKAGING e legados sem kind); INGREDIENT fica de fora")
         void shouldCountOnlyInsumosSkippingIngredientKind() {
             Include copo = Include.builder().id(UUID.randomUUID()).product(product)
@@ -824,6 +853,43 @@ class OrderServiceTest {
             OrderResponse result = orderService.findById(merchantId, orderId);
 
             assertThat(result.getItems().get(0).getUnmatchedSubItems()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("deve retornar no item a margem ideal gravada no pedido (snapshot)")
+        void shouldReturnItemTargetMarginPctSnapshot() {
+            order.getItems().get(0).setTargetMarginPct(new BigDecimal("55.00"));
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.findById(merchantId, orderId);
+
+            assertThat(result.getItems().get(0).getTargetMarginPct())
+                    .isEqualByComparingTo(new BigDecimal("55.00"));
+        }
+
+        @Test
+        @DisplayName("não deve reescrever o snapshot do item quando a margem ideal do produto muda depois")
+        void shouldKeepItemTargetMarginPctWhenProductChangesLater() {
+            order.getItems().get(0).setTargetMarginPct(new BigDecimal("55.00"));
+            // Lojista alterou a margem ideal do produto DEPOIS do pedido: o histórico não muda.
+            product.setTargetMarginPct(new BigDecimal("70.00"));
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.findById(merchantId, orderId);
+
+            assertThat(result.getItems().get(0).getTargetMarginPct())
+                    .isEqualByComparingTo(new BigDecimal("55.00"));
+        }
+
+        @Test
+        @DisplayName("deve retornar margem ideal nula em itens de pedidos antigos (sem snapshot)")
+        void shouldReturnNullTargetMarginPctForLegacyItems() {
+            product.setTargetMarginPct(new BigDecimal("70.00"));
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.findById(merchantId, orderId);
+
+            assertThat(result.getItems().get(0).getTargetMarginPct()).isNull();
         }
 
         @Test

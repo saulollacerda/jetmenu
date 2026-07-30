@@ -519,6 +519,35 @@ class AnotaAISyncServiceTest {
     // -------------------------------------------------------------------------
 
     @Test
+    @DisplayName("syncOrders deve gravar no item a margem ideal do produto (snapshot na importação)")
+    void syncOrders_shouldSnapshotProductTargetMarginPctOnItem() {
+        Product mappedProduct = Product.builder()
+                .id(UUID.randomUUID()).merchant(Merchant.builder().id(merchantId).build()).name("Açaí 500ml")
+                .status(ProductStatus.ACTIVE).externalId("product-internal-id")
+                .targetMarginPct(new BigDecimal("48.00")).build();
+
+        given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
+        given(anotaAIClient.getOrderList("test-api-key")).willReturn(buildOrderList("order-2"));
+        given(orderRepository.existsByExternalOrderIdAndMerchantId("order-2", merchantId)).willReturn(false);
+        given(anotaAIClient.getOrderDetail("test-api-key", "order-2"))
+                .willReturn(raw(buildOrderDetailWithSubItems("order-2")));
+        given(customerRepository.findByPhoneAndMerchantId("43123456789", merchantId))
+                .willReturn(Optional.of(Customer.builder().id(UUID.randomUUID())
+                        .merchant(Merchant.builder().id(merchantId).build()).build()));
+        given(feeRepository.findByNameIgnoreCaseAndMerchantId("money", merchantId))
+                .willReturn(Optional.empty());
+        given(productRepository.findByExternalIdAndMerchantId("product-internal-id", merchantId))
+                .willReturn(Optional.of(mappedProduct));
+
+        syncService.syncOrders(merchantId);
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        assertThat(orderCaptor.getValue().getItems().get(0).getTargetMarginPct())
+                .isEqualByComparingTo(new BigDecimal("48.00"));
+    }
+
+    @Test
     @DisplayName("syncOrders deve resolver extra ingredient por canonical name (normalizado)")
     void syncOrders_shouldMatchExtraIngredientByCanonicalName() {
         Ingredient acaiPremium = Ingredient.builder()
