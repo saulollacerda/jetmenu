@@ -12,9 +12,14 @@ var values (test-mode vs live-mode keys and price ids) — see "Config".
 When `STRIPE_API_KEY` is empty the endpoint still answers **HTTP 503** with a pt-BR
 ProblemDetail, so an unconfigured environment fails explicitly instead of throwing 500s.
 
-**Known gap:** only `checkout.session.completed` is handled. Stripe will keep charging on
-renewal, but JetMenu's `currentPeriodEnd` does not roll forward on its own — recurring
-`invoice.paid` handling still needs to be written and verified against the sandbox.
+**Renewals are handled.** `invoice.paid` with `billing_reason=subscription_cycle` rolls the
+period forward on every cycle Stripe collects. The invoice of the *first* payment
+(`subscription_create`) is deliberately ignored: it is emitted alongside
+`checkout.session.completed` for the very same money under a different id, and since the
+idempotency guard keys off the payment reference, `cs_…` and `in_…` would buy two periods for
+one payment. Verified end to end against the sandbox with a Stripe **test clock**: a real
+`subscription_cycle` invoice produced exactly one new `PAID` row keyed by `in_…`, and the
+`subscription_create` invoice produced none.
 
 ---
 
@@ -93,7 +98,7 @@ payload; this service owns what "paid" means.
 | Requirement | Stripe implementation |
 |---|---|
 | Checkout | `StripeBillingProvider` + `StripeCheckoutGateway` (`mode=subscription`, pt-BR locale) |
-| Plan → price mapping | `StripePriceResolver`, config-driven (`stripe.price-ids.<slug>`) |
+| Plan → price mapping | `StripePriceResolver`, reads `plans.stripe_price_id` (mirrored by `StripeCatalogSync`) |
 | Callback authentication | `StripeEventVerifier` — HMAC `Stripe-Signature` vs `STRIPE_WEBHOOK_SECRET` |
 | Webhook | `StripeWebhookController` → `StripeWebhookService` → `SubscriptionActivationService` |
 | Security entry | `.requestMatchers("/api/webhooks/stripe").permitAll()` |
@@ -195,7 +200,6 @@ Note: `invoices.stripe_invoice_id` also exists and predates AbacatePay. It is de
 |---|---|---|
 | `STRIPE_API_KEY` | `sk_test_…` / `rk_test_…` | `sk_live_…` / `rk_live_…` |
 | `STRIPE_WEBHOOK_SECRET` | `whsec_…` (test endpoint or `stripe listen`) | `whsec_…` (live endpoint) |
-| `STRIPE_PRICE_BASICO` | `price_…` created in test mode | `price_…` created in live mode |
 | `APP_FRONTEND_BASE_URL` | `http://localhost:5173` | `https://app.jetmenu.com.br` |
 
 All default to empty, in `application-dev.properties`, `application-prod.properties`,
@@ -203,20 +207,63 @@ All default to empty, in `application-dev.properties`, `application-prod.propert
 in both modes — only the values differ.** Register the webhook at `POST /api/webhooks/stripe`
 for `checkout.session.completed`.
 
-Price ids live in config, not in a `plans` column, so a new environment needs no database
-rows. Adding a plan means adding a `stripe.price-ids.<slug>` entry; a plan with no configured
-price id fails with 503 rather than silently succeeding.
+## The plan catalog
+
+**Stripe is the source of truth for what a plan is and what it costs.** A plan is created in
+the Stripe dashboard — a Product with a recurring monthly BRL Price — and `StripeCatalogSync`
+mirrors it into `plans` (`V31`: `slug`, `stripe_price_id`, `stripe_product_id`). Adding a plan
+costs no property, no environment variable and no deploy.
+
+The Price's **`lookup_key`** is the join: it maps 1:1 onto `plans.slug`, our stable identifier.
+Stripe provides that field for exactly this purpose, so no `metadata` convention is needed.
+Without a lookup_key the slug falls back to the product name, which is enough for a
+single-Price product and reported as an error when two Prices of one Product collide.
+
+`plans.slug` is set once at creation by `PlanSlug` and never re-derived from `plans.name`. The
+name is a display string the business may change; before `V31` it *was* the config key, so
+renaming a plan silently detached it from its Stripe Price and broke checkout with no error
+until a merchant clicked "Assinar". For the same reason the sync does **not** rename an
+existing plan: Stripe's Product name is billing-statement copy ("Jetmenu"), `plans.name` is
+what a merchant reads in Settings ("Básico"). Only a plan appearing for the first time takes
+its name from the Product.
+
+The sync **pulls** (`prices.list`) rather than reading a webhook payload. An event is delivered
+once and a missed delivery leaves a plan silently absent; a list is idempotent, so it can run
+at boot, from a webhook trigger or by hand and always converges. Webhook events are a trigger,
+not a data source.
+
+Sandbox and production still differ by values only: each API key sees only its own mode's
+catalog, so dev fills its rows from test mode and production from live mode, same code.
+
+`StripeCatalogSyncRunner` syncs at startup and then logs every active plan still without a
+price id. It logs and does **not** block boot: `plans` is data and the Stripe catalog changes
+with no deploy, so a boot-blocking check would turn a dashboard edit into a full outage on the
+next restart. Checkout already fails loudly and specifically (503) for the affected plan.
+
+**Why this replaced per-plan configuration:** with the amount typed into both Stripe and
+`plans.price_monthly`, nothing kept them equal — and they had already drifted in the sandbox
+(R$ 50 stored against R$ 70 charged) before a single merchant had paid. Only one of the two
+takes money, so it wins and the other follows.
 
 ## State of the integration
 
 Done: Stripe SDK, `BillingProvider` implementation, `V30` + repointed accessors, webhook
 controller with signature verification, `SecurityConfig` entry, config/env vars, and the
 frontend call site restored in `SettingsView.vue`. Written test-first — 35 new tests, full
-backend suite 1063 passing.
+backend suite 1063 passing. `V31` (`plans.slug`, `stripe_price_id`), `StripeCatalogSync` and
+`invoice.paid` renewals came after, taking the suite to 1082.
 
 Note the in-app pricing page (`PlansView.vue`) no longer exists: pricing moved to the
 landing page, which links to `/checkout?plan=<slug>`. `SettingsView.vue` is now the only
 in-app checkout entry point, and it is the renew/upgrade path for a lapsed subscription.
 
-Remaining: recurring `invoice.paid` handling, and end-to-end verification against the Stripe
-sandbox (nothing here has run against a real Stripe account).
+**Verified against the real sandbox** (account `acct_1TwjvoCdV8r3Zyx7`, test mode): catalog
+sync, hosted checkout paid with `4242…`, `checkout.session.completed` activating the
+subscription, a replayed event proving the idempotency guard, and a test-clock renewal. What
+the sandbox run cannot show is the period *stretching*: `SubscriptionActivationService`
+recomputes it as `now .. now + 1 month`, and only Stripe's clock moved, so the dates looked
+unchanged. The proof of renewal is the second `PAID` invoice keyed by `in_…`.
+
+Remaining: the Customer Portal (a merchant has no way to cancel or change card), and
+`integration_identifier` on Checkout Session creation — supported on the account's API
+version, `2026-06-24.dahlia`.

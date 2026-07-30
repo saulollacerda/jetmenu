@@ -116,4 +116,62 @@ class StripeWebhookServiceTest {
 
         then(activationService).should(never()).activatePaidSubscription(any(), any(), any(), any());
     }
+
+    @Test
+    @DisplayName("deve renovar a assinatura ao receber invoice.paid de ciclo, lendo o "
+            + "merchant/plano do metadata da assinatura")
+    void shouldRenewSubscriptionOnCycleInvoice() {
+        UUID merchantId = UUID.randomUUID();
+        UUID planId = UUID.randomUUID();
+
+        service.handle(parse(StripeTestEvents.invoicePaid(
+                "in_test_123", merchantId, planId, 7000L, "subscription_cycle")));
+
+        then(activationService).should().activatePaidSubscription(
+                eq(merchantId), eq(planId), eq(new BigDecimal("70.00")), eq("in_test_123"));
+    }
+
+    @Test
+    @DisplayName("NÃO deve renovar na invoice da cobrança inicial — o checkout.session.completed "
+            + "já ativou aquele mesmo dinheiro, e o id da invoice é outra chave de idempotência")
+    void shouldNotRenewOnTheFirstPaymentInvoice() {
+        service.handle(parse(StripeTestEvents.invoicePaid(
+                "in_test_first", UUID.randomUUID(), UUID.randomUUID(), 7000L, "subscription_create")));
+
+        then(activationService).should(never()).activatePaidSubscription(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("deve usar o id da invoice como chave de idempotência — reentrega da mesma "
+            + "renovação não concede um segundo período")
+    void shouldUseInvoiceIdAsIdempotencyKey() {
+        UUID merchantId = UUID.randomUUID();
+        UUID planId = UUID.randomUUID();
+        Event event = parse(StripeTestEvents.invoicePaid(
+                "in_test_repeat", merchantId, planId, 7000L, "subscription_cycle"));
+
+        service.handle(event);
+        service.handle(event);
+
+        then(activationService).should(org.mockito.Mockito.times(2)).activatePaidSubscription(
+                any(), any(), any(), eq("in_test_repeat"));
+    }
+
+    @Test
+    @DisplayName("não deve estender período em invoice paga com billing_reason desconhecido")
+    void shouldNotExtendOnUnknownBillingReason() {
+        service.handle(parse(StripeTestEvents.invoicePaid(
+                "in_test_manual", UUID.randomUUID(), UUID.randomUUID(), 7000L, "manual")));
+
+        then(activationService).should(never()).activatePaidSubscription(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("deve ignorar invoice sem metadata na assinatura em vez de estourar")
+    void shouldIgnoreInvoiceWithoutSubscriptionMetadata() {
+        service.handle(parse(StripeTestEvents.invoicePaid(
+                "in_test_nometa", null, null, 7000L, "subscription_cycle")));
+
+        then(activationService).should(never()).activatePaidSubscription(any(), any(), any(), any());
+    }
 }
