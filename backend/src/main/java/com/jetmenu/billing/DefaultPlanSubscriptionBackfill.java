@@ -25,8 +25,10 @@ import java.util.List;
  *   <li>No default plan configured (production) — returns before reading anything, so not
  *       a single statement is issued.</li>
  *   <li>Only PENDING subscriptions <em>without</em> a plan are touched. A subscription
- *       that already has a plan, or that is ACTIVE/PAST_DUE/CANCELED, is left exactly as
- *       it is — a canceled account is never resurrected.</li>
+ *       that already has a plan, or that is TRIAL/ACTIVE/PAST_DUE/CANCELED, is left
+ *       exactly as it is — a canceled account is never resurrected, and a running free
+ *       trial is never cut short. A sign-up trial also has {@code plan == null}, so it is
+ *       the status check alone that keeps it out of scope.</li>
  *   <li>Idempotent: upgraded rows are no longer PENDING, so a second run matches nothing.</li>
  * </ul>
  */

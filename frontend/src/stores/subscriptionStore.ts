@@ -10,8 +10,9 @@ export const useSubscriptionStore = defineStore('subscription', () => {
   const isBlocked = computed(() => {
     const sub = subscription.value
     if (!sub) return false
-    // PENDING: subscription created at registration, never paid — the merchant
-    // must pick a plan before using the system (the free trial was removed).
+    // PENDING: subscription with no plan and no trial — the merchant must pick a
+    // plan before using the system. Sign-up now grants TRIAL instead, so PENDING
+    // only reaches here through the legacy backfill.
     if (sub.status === 'PENDING' || sub.status === 'PAST_DUE' || sub.status === 'CANCELED')
       return true
     const now = Date.now()

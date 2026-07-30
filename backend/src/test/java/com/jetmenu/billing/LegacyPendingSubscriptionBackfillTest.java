@@ -104,6 +104,26 @@ class LegacyPendingSubscriptionBackfillTest {
     }
 
     @Test
+    @DisplayName("não cria segunda assinatura para lojista em teste grátis (TRIAL)")
+    void shouldNotCreateSubscriptionForMerchantOnTrial() {
+        UUID onTrialId = UUID.randomUUID();
+        Merchant onTrial = Merchant.builder().id(onTrialId).build();
+        Subscription trial = Subscription.builder()
+                .merchantId(onTrialId)
+                .status(SubscriptionStatus.TRIAL)
+                .trialEndsAt(LocalDateTime.now().plusDays(14))
+                .build();
+
+        given(merchantRepository.findAll()).willReturn(List.of(onTrial));
+        given(subscriptionRepository.findAll()).willReturn(List.of(trial));
+
+        backfill.run();
+
+        then(subscriptionRepository).should(never()).saveAll(any());
+        assertThat(trial.getStatus()).isEqualTo(SubscriptionStatus.TRIAL);
+    }
+
+    @Test
     @DisplayName("não faz nada quando todos os lojistas já possuem assinatura")
     void shouldDoNothingWhenAllMerchantsHaveSubscription() {
         UUID merchantId = UUID.randomUUID();
