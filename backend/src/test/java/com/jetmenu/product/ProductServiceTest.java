@@ -180,6 +180,41 @@ class ProductServiceTest {
         }
 
         @Test
+        @DisplayName("deve gravar a margem ideal informada no request e retorná-la na resposta")
+        void shouldPersistTargetMarginPctFromRequest() {
+            ProductRequest withTarget = ProductRequest.builder()
+                    .name("X-Burguer")
+                    .price(new BigDecimal("25.90"))
+                    .categoryId(categoryId)
+                    .targetMarginPct(new BigDecimal("55.00"))
+                    .build();
+
+            given(productRepository.existsByNameAndMerchantId(anyString(), eq(merchantId))).willReturn(false);
+            given(categoryRepository.findByIdAndMerchantId(categoryId, merchantId)).willReturn(Optional.of(category));
+            given(productRepository.save(any(Product.class))).willAnswer(inv -> inv.getArgument(0));
+
+            ProductResponse result = productService.create(merchantId, withTarget);
+
+            assertThat(result.getTargetMarginPct()).isEqualByComparingTo(new BigDecimal("55.00"));
+            then(productRepository).should().save(argThat(p ->
+                    p.getTargetMarginPct() != null
+                            && p.getTargetMarginPct().compareTo(new BigDecimal("55.00")) == 0));
+        }
+
+        @Test
+        @DisplayName("deve manter margem ideal nula quando o request não informa (produto sem acompanhamento)")
+        void shouldKeepTargetMarginPctNullWhenNotProvided() {
+            given(productRepository.existsByNameAndMerchantId(anyString(), eq(merchantId))).willReturn(false);
+            given(categoryRepository.findByIdAndMerchantId(categoryId, merchantId)).willReturn(Optional.of(category));
+            given(productRepository.save(any(Product.class))).willAnswer(inv -> inv.getArgument(0));
+
+            ProductResponse result = productService.create(merchantId, productRequest);
+
+            assertThat(result.getTargetMarginPct()).isNull();
+            then(productRepository).should().save(argThat(p -> p.getTargetMarginPct() == null));
+        }
+
+        @Test
         @DisplayName("deve popular canonicalName normalizado a partir do nome (lowercase, sem acentos, espaços colapsados)")
         void shouldPopulateCanonicalNameNormalizedFromName() {
             ProductRequest withAccent = ProductRequest.builder()
@@ -425,6 +460,49 @@ class ProductServiceTest {
             productService.update(merchantId, productId, req);
 
             then(productRepository).should().save(argThat(p -> p.getStatus() == ProductStatus.ACTIVE));
+        }
+
+        @Test
+        @DisplayName("deve atualizar a margem ideal quando informada no request")
+        void shouldUpdateTargetMarginPct() {
+            ProductRequest req = ProductRequest.builder()
+                    .name("X-Burguer")
+                    .price(new BigDecimal("25.90"))
+                    .categoryId(categoryId)
+                    .targetMarginPct(new BigDecimal("42.50"))
+                    .build();
+
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(categoryRepository.findByIdAndMerchantId(categoryId, merchantId)).willReturn(Optional.of(category));
+            given(productRepository.save(any(Product.class))).willAnswer(inv -> inv.getArgument(0));
+
+            ProductResponse result = productService.update(merchantId, productId, req);
+
+            assertThat(result.getTargetMarginPct()).isEqualByComparingTo(new BigDecimal("42.50"));
+            then(productRepository).should().save(argThat(p ->
+                    p.getTargetMarginPct() != null
+                            && p.getTargetMarginPct().compareTo(new BigDecimal("42.50")) == 0));
+        }
+
+        @Test
+        @DisplayName("deve limpar a margem ideal quando o request vem sem valor")
+        void shouldClearTargetMarginPctWhenRequestHasNone() {
+            product.setTargetMarginPct(new BigDecimal("60.00"));
+
+            ProductRequest req = ProductRequest.builder()
+                    .name("X-Burguer")
+                    .price(new BigDecimal("25.90"))
+                    .categoryId(categoryId)
+                    .build();
+
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(categoryRepository.findByIdAndMerchantId(categoryId, merchantId)).willReturn(Optional.of(category));
+            given(productRepository.save(any(Product.class))).willAnswer(inv -> inv.getArgument(0));
+
+            ProductResponse result = productService.update(merchantId, productId, req);
+
+            assertThat(result.getTargetMarginPct()).isNull();
+            then(productRepository).should().save(argThat(p -> p.getTargetMarginPct() == null));
         }
 
         @Test

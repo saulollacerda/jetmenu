@@ -42,6 +42,7 @@ public class ProductService {
                 .canonicalName(IngredientNameNormalizer.normalize(request.getName()))
                 .price(request.getPrice())
                 .status(request.getStatus() != null ? request.getStatus() : ProductStatus.ACTIVE)
+                .targetMarginPct(request.getTargetMarginPct())
                 .category(category)
                 .build();
 
@@ -71,6 +72,8 @@ public class ProductService {
         product.setName(request.getName());
         product.setCanonicalName(IngredientNameNormalizer.normalize(request.getName()));
         product.setPrice(request.getPrice());
+        // Margem ideal segue o request: ausente = lojista deixou de acompanhar a margem.
+        product.setTargetMarginPct(request.getTargetMarginPct());
         product.setCategory(category);
         if (request.getStatus() != null) {
             product.setStatus(request.getStatus());
@@ -100,6 +103,7 @@ public class ProductService {
                 .categoryName(category != null ? category.getName() : null)
                 .unitCost(unitCost)
                 .marginPct(marginPct)
+                .targetMarginPct(product.getTargetMarginPct())
                 .origin(product.getOrigin())
                 .build();
     }
