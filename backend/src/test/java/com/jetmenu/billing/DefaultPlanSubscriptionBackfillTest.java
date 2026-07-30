@@ -166,6 +166,25 @@ class DefaultPlanSubscriptionBackfillTest {
         }
 
         @Test
+        @DisplayName("não deve alterar assinatura em teste grátis (TRIAL), preservando trialEndsAt")
+        void shouldNotTouchTrialSubscription() {
+            // A sign-up trial also has plan == null, so only the status keeps it out of the
+            // eligibility filter. Cutting a running free trial short would be the worst
+            // outcome here, so it is guarded explicitly.
+            Subscription trial = subscription(SubscriptionStatus.TRIAL, null);
+            LocalDateTime trialEndsAt = LocalDateTime.now().plusDays(14);
+            trial.setTrialEndsAt(trialEndsAt);
+            given(subscriptionRepository.findAll()).willReturn(List.of(trial));
+
+            backfill.run();
+
+            then(subscriptionRepository).should(never()).saveAll(any());
+            assertThat(trial.getStatus()).isEqualTo(SubscriptionStatus.TRIAL);
+            assertThat(trial.getPlan()).isNull();
+            assertThat(trial.getTrialEndsAt()).isEqualTo(trialEndsAt);
+        }
+
+        @Test
         @DisplayName("não deve alterar assinaturas ACTIVE, PAST_DUE ou CANCELED, mesmo sem plano")
         void shouldNotTouchNonPendingSubscriptions() {
             Subscription active = subscription(SubscriptionStatus.ACTIVE, null);
