@@ -34,6 +34,12 @@ const showRecipeModal = ref(false)
 const editing = ref<ProductResponse | null>(null)
 const selectedProduct = ref<ProductResponse | null>(null)
 const form = ref<ProductRequest>({ name: '', price: 0, categoryId: '' })
+/**
+ * A margem ideal fica fora de `form` porque o input precisa distinguir "vazio"
+ * (não acompanhar) de `0`, o que um number binding não faz.
+ */
+const targetMarginInput = ref('')
+const targetMarginError = ref<string | null>(null)
 const recipeForm = ref<IncludeRequest>({ name: '', cost: 0, quantity: 1, kind: 'PACKAGING' })
 const confirmDeleteId = ref<string | null>(null)
 const confirmClearRecipe = ref(false)
@@ -86,23 +92,45 @@ async function handleSyncCatalog() {
 function openCreate() {
   editing.value = null
   form.value = { name: '', price: 0, categoryId: '' }
+  targetMarginInput.value = ''
+  targetMarginError.value = null
   showModal.value = true
 }
 function openEdit(p: ProductResponse) {
   editing.value = p
   form.value = { name: p.name, price: Number(p.price), categoryId: p.categoryId }
+  targetMarginInput.value = p.targetMarginPct == null ? '' : String(p.targetMarginPct)
+  targetMarginError.value = null
   showModal.value = true
 }
 function closeModal() {
   showModal.value = false
   editing.value = null
 }
+/** `null` quando o campo está vazio; `NaN` quando o texto não é um número. */
+function parseTargetMargin(): number | null {
+  const raw = targetMarginInput.value.trim()
+  if (raw === '') return null
+  return Number(raw)
+}
 async function handleSubmit() {
+  const targetMarginPct = parseTargetMargin()
+  if (
+    targetMarginPct !== null &&
+    (Number.isNaN(targetMarginPct) || targetMarginPct < 0 || targetMarginPct > 100)
+  ) {
+    targetMarginError.value = 'Margem ideal deve estar entre 0 e 100.'
+    return
+  }
+  targetMarginError.value = null
+  // O campo vai sempre no payload: o update do backend o atribui incondicionalmente,
+  // então omiti-lo apagaria a margem ideal já gravada no produto.
+  const payload: ProductRequest = { ...form.value, targetMarginPct }
   try {
     if (editing.value) {
-      await productStore.update(editing.value.id, form.value)
+      await productStore.update(editing.value.id, payload)
     } else {
-      await productStore.create(form.value)
+      await productStore.create(payload)
       showToast('Produto criado com sucesso!')
     }
     closeModal()
@@ -579,6 +607,21 @@ onMounted(() => {
               placeholder="0,00"
               data-testid="product-price-input"
             />
+          </UIField>
+          <UIField label="Margem ideal (%)" hint="Opcional. Deixe em branco para não acompanhar.">
+            <UIInput
+              v-model="targetMarginInput"
+              type="number"
+              placeholder="Ex.: 60"
+              data-testid="product-target-margin-input"
+            />
+            <div
+              v-if="targetMarginError"
+              data-testid="product-target-margin-error"
+              :style="{ color: UI.rose, fontSize: '11.5px', marginTop: '4px' }"
+            >
+              {{ targetMarginError }}
+            </div>
           </UIField>
           <div
             :style="{
