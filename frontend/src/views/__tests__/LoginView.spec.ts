@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount, RouterLinkStub } from '@vue/test-utils'
 import LoginView from '@/views/LoginView.vue'
+import { savePendingPlan } from '@/lib/pendingPlan'
 
 const routeState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
 const pushMock = vi.hoisted(() => vi.fn())
@@ -67,5 +68,42 @@ describe('LoginView', () => {
     await submit(wrapper)
 
     expect(pushMock).toHaveBeenCalledWith({ path: '/checkout', query: { plan: 'basico' } })
+  })
+})
+
+// The global localStorage in this environment is an unusable stub.
+function installStorage() {
+  const map = new Map<string, string>()
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+      removeItem: (k: string) => void map.delete(k),
+    } as unknown as Storage,
+  })
+}
+
+describe('LoginView — retoma o plano guardado', () => {
+  beforeEach(() => {
+    installStorage()
+    vi.clearAllMocks()
+    routeState.query = {}
+  })
+
+  it('sem plano na query, mas com plano guardado, vai para o checkout', async () => {
+    savePendingPlan('basico')
+
+    const wrapper = mount(LoginView, GLOBAL)
+    await submit(wrapper)
+
+    expect(pushMock).toHaveBeenCalledWith('/checkout')
+  })
+
+  it('sem plano em lugar nenhum, vai para o painel', async () => {
+    const wrapper = mount(LoginView, GLOBAL)
+    await submit(wrapper)
+
+    expect(pushMock).toHaveBeenCalledWith('/dashboard')
   })
 })

@@ -3,6 +3,7 @@ import { mount, flushPromises, enableAutoUnmount, RouterLinkStub } from '@vue/te
 import CheckoutView from '@/views/CheckoutView.vue'
 import { billingService } from '@/services/billingService'
 import type { PlanResponse } from '@/types/Billing'
+import { savePendingPlan, peekPendingPlan } from '@/lib/pendingPlan'
 
 enableAutoUnmount(afterEach)
 
@@ -175,5 +176,88 @@ describe('CheckoutView — visitante autenticado', () => {
 
     const links = wrapper.findAllComponents(RouterLinkStub)
     expect(links.some((l) => l.props('to') === '/settings?section=billing')).toBe(true)
+  })
+})
+
+// The plan only survives in the URL while the visitor stays in one tab. With email
+// confirmation on, the confirmation link lands on a fixed /email-verificado in a NEW tab
+// with no query string — so the slug is also persisted and resumed from storage.
+describe('CheckoutView — plano retomado do armazenamento', () => {
+  function installStorage() {
+    const map = new Map<string, string>()
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => map.get(k) ?? null,
+        setItem: (k: string, v: string) => void map.set(k, v),
+        removeItem: (k: string) => void map.delete(k),
+      } as unknown as Storage,
+    })
+  }
+
+  beforeEach(() => {
+    installStorage()
+  })
+
+  it('guarda o plano antes de mandar o visitante anônimo para o cadastro', async () => {
+    authState.authenticated = false
+    routeState.query = { plan: 'basico' }
+
+    mount(CheckoutView, GLOBAL)
+    await flushPromises()
+
+    expect(peekPendingPlan()).toBe('basico')
+  })
+
+  it('retoma o plano guardado quando volta autenticado sem query', async () => {
+    savePendingPlan('basico')
+    routeState.query = {}
+    mockedBilling.listPlans.mockResolvedValue([BASIC_PLAN])
+    mockedBilling.createCheckout.mockResolvedValue({ url: 'https://checkout.stripe.com/s/789' })
+
+    mount(CheckoutView, GLOBAL)
+    await flushPromises()
+
+    expect(mockedBilling.createCheckout).toHaveBeenCalledWith('plan-1')
+    expect(window.location.href).toBe('https://checkout.stripe.com/s/789')
+  })
+
+  it('consome o plano guardado, para não voltar ao checkout em todo login', async () => {
+    savePendingPlan('basico')
+    routeState.query = {}
+    mockedBilling.listPlans.mockResolvedValue([BASIC_PLAN])
+    mockedBilling.createCheckout.mockResolvedValue({ url: 'https://checkout.stripe.com/s/789' })
+
+    mount(CheckoutView, GLOBAL)
+    await flushPromises()
+
+    expect(peekPendingPlan()).toBeNull()
+  })
+
+  it('descarta em silêncio um plano guardado que não existe mais', async () => {
+    savePendingPlan('plano-extinto')
+    routeState.query = {}
+    mockedBilling.listPlans.mockResolvedValue([BASIC_PLAN])
+
+    const wrapper = mount(CheckoutView, GLOBAL)
+    await flushPromises()
+
+    expect(replaceMock).toHaveBeenCalledWith('/dashboard')
+    expect(wrapper.find('[data-testid="checkout-error"]').exists()).toBe(false)
+    expect(peekPendingPlan()).toBeNull()
+    expect(mockedBilling.createCheckout).not.toHaveBeenCalled()
+  })
+
+  it('a query tem precedência sobre o valor guardado', async () => {
+    savePendingPlan('plano-antigo')
+    routeState.query = { plan: 'basico' }
+    mockedBilling.listPlans.mockResolvedValue([BASIC_PLAN])
+    mockedBilling.createCheckout.mockResolvedValue({ url: 'https://checkout.stripe.com/s/1' })
+
+    mount(CheckoutView, GLOBAL)
+    await flushPromises()
+
+    expect(mockedBilling.createCheckout).toHaveBeenCalledWith('plan-1')
+    expect(peekPendingPlan()).toBeNull()
   })
 })

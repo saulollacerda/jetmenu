@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
+import { savePendingPlan, peekPendingPlan } from '@/lib/pendingPlan'
 import type { UserRequest } from '@/types/User'
 import { UI, UIField, UIInput, UIIcon } from '@/design'
 
@@ -20,6 +21,12 @@ const loginLink = computed(() =>
 )
 
 const validationError = ref<string | null>(null)
+
+// A visitor can arrive straight from the landing page CTA. Persist the plan so it survives
+// email confirmation, whose return link carries no query string and usually opens a new tab.
+onMounted(() => {
+  if (planSlug.value) savePendingPlan(planSlug.value)
+})
 const accepted = ref(false)
 
 const form = ref<UserRequest>({
@@ -69,11 +76,20 @@ async function handleSubmit() {
   }
   try {
     await authStore.register(form.value)
-    // Email confirmation is required: stay here and show the confirmation notice
-    // (authStore.awaitingEmailConfirmation becomes true). When it is off the account
-    // already has a session, so a pending checkout can resume right away.
-    if (!authStore.awaitingEmailConfirmation && planSlug.value) {
+    if (authStore.awaitingEmailConfirmation) {
+      // No session yet: stay here and show the confirmation notice. The chosen plan is
+      // persisted, so checkout resumes once the merchant confirms.
+      return
+    }
+    // Confirmation is off (local dev provider): the account already has a session, so this
+    // view must navigate. Staying put would leave the merchant logged in on the sign-up
+    // form, which reads as a broken button.
+    if (planSlug.value) {
       router.push({ path: '/checkout', query: { plan: planSlug.value } })
+    } else if (peekPendingPlan()) {
+      router.push('/checkout')
+    } else {
+      router.push('/dashboard')
     }
   } catch {
     // store has error

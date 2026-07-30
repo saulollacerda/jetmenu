@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { billingService } from '@/services/billingService'
 import { useAuthStore } from '@/stores/authStore'
+import { savePendingPlan, takePendingPlan } from '@/lib/pendingPlan'
 import { UI, UIIcon } from '@/design'
 
 /**
@@ -19,6 +20,11 @@ const auth = useAuthStore()
 
 const loading = ref(true)
 const errorMessage = ref<string | null>(null)
+
+// Resolved once on mount so the retry button keeps working after the stored slug
+// has been consumed.
+const chosenSlug = ref('')
+const slugFromStorage = ref(false)
 
 /** "Básico" → "basico": matches the plan slug the landing page links with. */
 function slugify(value: string): string {
@@ -39,11 +45,18 @@ async function startCheckout() {
   loading.value = true
   errorMessage.value = null
   try {
-    const slug = planSlug()
+    const slug = chosenSlug.value
     const plans = await billingService.listPlans()
     // Without a slug (or with a single plan) there is nothing to choose from.
     const plan = slug ? plans.find((p) => slugify(p.name) === slug) : plans[0]
     if (!plan) {
+      // A slug remembered from an earlier visit can name a plan that no longer exists
+      // (renamed or deactivated). The visitor did nothing wrong and never asked for
+      // this navigation, so drop it silently instead of showing an error.
+      if (slugFromStorage.value) {
+        router.replace('/dashboard')
+        return
+      }
       errorMessage.value =
         'Plano não encontrado. Volte a jetmenu.com.br e escolha um plano novamente.'
       return
@@ -63,12 +76,22 @@ async function startCheckout() {
 }
 
 onMounted(() => {
+  const urlSlug = planSlug()
+
   if (!auth.isAuthenticated) {
-    // The plan rides along through register/login and checkout resumes there.
-    const slug = planSlug()
-    router.replace({ path: '/register', query: slug ? { plan: slug } : {} })
+    // Persisted as well as passed through the URL. With email confirmation on, the
+    // merchant returns through a fixed /email-verificado link — usually in a new tab
+    // opened by their mail client — where no query string survives.
+    if (urlSlug) savePendingPlan(urlSlug)
+    router.replace({ path: '/register', query: urlSlug ? { plan: urlSlug } : {} })
     return
   }
+
+  // Consumed either way: acting on it at most once keeps an abandoned checkout from
+  // hijacking every later login.
+  const stored = takePendingPlan()
+  chosenSlug.value = urlSlug || stored || ''
+  slugFromStorage.value = !urlSlug && !!stored
   return startCheckout()
 })
 </script>

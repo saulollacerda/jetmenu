@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
+import { peekPendingPlan } from '@/lib/pendingPlan'
 import type { LoginRequest } from '@/types/Auth'
 import { UI, UIField, UIInput, UIIcon } from '@/design'
 
@@ -20,6 +21,12 @@ async function handleSubmit() {
     const plan = route.query.plan
     if (typeof plan === 'string' && plan) {
       router.push({ path: '/checkout', query: { plan } })
+      return
+    }
+    // Same intent, but the plan was chosen before a sign-up that required email
+    // confirmation, so it survives only in storage. CheckoutView consumes it.
+    if (peekPendingPlan()) {
+      router.push('/checkout')
       return
     }
     router.push('/dashboard')
