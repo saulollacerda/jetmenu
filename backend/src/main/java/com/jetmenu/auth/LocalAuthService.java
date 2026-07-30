@@ -7,6 +7,7 @@ import com.jetmenu.merchant.Merchant;
 import com.jetmenu.merchant.MerchantRepository;
 import com.jetmenu.merchant.MerchantResponse;
 import com.jetmenu.merchant.MerchantStatus;
+import com.jetmenu.billing.SubscriptionService;
 import com.jetmenu.security.LocalTokenIssuer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
@@ -35,15 +36,18 @@ public class LocalAuthService {
     private final IdentityRepository identityRepository;
     private final PasswordEncoder passwordEncoder;
     private final LocalTokenIssuer tokenIssuer;
+    private final SubscriptionService subscriptionService;
 
     public LocalAuthService(MerchantRepository merchantRepository,
                             IdentityRepository identityRepository,
                             PasswordEncoder passwordEncoder,
-                            LocalTokenIssuer tokenIssuer) {
+                            LocalTokenIssuer tokenIssuer,
+                            SubscriptionService subscriptionService) {
         this.merchantRepository = merchantRepository;
         this.identityRepository = identityRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenIssuer = tokenIssuer;
+        this.subscriptionService = subscriptionService;
     }
 
     @Transactional
@@ -74,6 +78,12 @@ public class LocalAuthService {
                 .providerUserId(providerUserId)
                 .createdAt(now)
                 .build());
+
+        // Mirrors MerchantService.create: without a subscription row the merchant can never be
+        // activated, because SubscriptionActivationService updates an existing subscription and
+        // throws SubscriptionNotFoundException otherwise. A merchant registered here would then
+        // pay in Stripe and have the webhook answered 404 — money taken, nothing unblocked.
+        subscriptionService.createPendingSubscription(saved.getId());
 
         String token = tokenIssuer.issue(providerUserId, saved.getEmail());
         return DevAuthResponse.builder().accessToken(token).merchant(toResponse(saved)).build();

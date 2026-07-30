@@ -4,6 +4,7 @@ import com.jetmenu.identity.Identity;
 import com.jetmenu.identity.IdentityRepository;
 import com.jetmenu.merchant.DuplicateMerchantException;
 import com.jetmenu.merchant.Merchant;
+import com.jetmenu.billing.SubscriptionService;
 import com.jetmenu.merchant.MerchantRepository;
 import com.jetmenu.security.LocalTokenIssuer;
 import org.junit.jupiter.api.DisplayName;
@@ -43,6 +44,9 @@ class LocalAuthServiceTest {
     @Mock
     private LocalTokenIssuer tokenIssuer;
 
+    @Mock
+    private SubscriptionService subscriptionService;
+
     @InjectMocks
     private LocalAuthService service;
 
@@ -78,6 +82,9 @@ class LocalAuthServiceTest {
 
         verify(merchantRepository).save(any(Merchant.class));
         verify(identityRepository).save(any(Identity.class));
+        // Sem essa linha o lojista paga na Stripe e o webhook responde 404: a ativação
+        // atualiza uma assinatura existente, não cria uma.
+        verify(subscriptionService).createPendingSubscription(merchantId);
     }
 
     @Test
