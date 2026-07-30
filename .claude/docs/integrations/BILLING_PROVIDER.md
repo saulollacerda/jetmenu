@@ -1,12 +1,20 @@
 # Billing Provider Integration
 
-**Status: no payment provider is integrated.** AbacatePay was removed; the next provider
-plugs into the seam described here. JetMenu's own billing domain — plans, subscriptions,
-invoices and the activation rules — was left untouched and is ready to be reused on day one.
+**Status: Stripe is integrated** (2026-07-29). It plugs into the seam described below;
+JetMenu's own billing domain — plans, subscriptions, invoices and the activation rules — was
+reused untouched. AbacatePay, the previous provider, is gone; the history it left behind is
+described under "The two legacy columns".
 
-While no provider exists, `POST /api/subscription/checkout` answers **HTTP 503** with a
-pt-BR ProblemDetail, and both plan screens show a "pagamento temporariamente indisponível"
-notice instead of a checkout button.
+`POST /api/subscription/checkout` creates a **Stripe hosted Checkout Session in subscription
+mode** and returns its URL. Sandbox and production run the same code and differ only in env
+var values (test-mode vs live-mode keys and price ids) — see "Config".
+
+When `STRIPE_API_KEY` is empty the endpoint still answers **HTTP 503** with a pt-BR
+ProblemDetail, so an unconfigured environment fails explicitly instead of throwing 500s.
+
+**Known gap:** only `checkout.session.completed` is handled. Stripe will keep charging on
+renewal, but JetMenu's `currentPeriodEnd` does not roll forward on its own — recurring
+`invoice.paid` handling still needs to be written and verified against the sandbox.
 
 ---
 
@@ -80,7 +88,23 @@ payload; this service owns what "paid" means.
 
 ---
 
-## What was removed and must be re-added
+## What a provider must supply — all implemented by Stripe
+
+| Requirement | Stripe implementation |
+|---|---|
+| Checkout | `StripeBillingProvider` + `StripeCheckoutGateway` (`mode=subscription`, pt-BR locale) |
+| Plan → price mapping | `StripePriceResolver`, config-driven (`stripe.price-ids.<slug>`) |
+| Callback authentication | `StripeEventVerifier` — HMAC `Stripe-Signature` vs `STRIPE_WEBHOOK_SECRET` |
+| Webhook | `StripeWebhookController` → `StripeWebhookService` → `SubscriptionActivationService` |
+| Security entry | `.requestMatchers("/api/webhooks/stripe").permitAll()` |
+| Payment reference column | `V30`, `invoices.payment_reference` |
+
+`UnavailableBillingProvider` was **deleted** rather than kept behind `@Primary`:
+`StripeBillingProvider` answers the same 503 when unconfigured, so keeping both would have
+left dead code plus a two-unqualified-bean startup hazard.
+
+The subsections below record what the AbacatePay removal took out and therefore what Stripe
+had to restore — they are the rationale for the shape above, not open work.
 
 ### The webhook endpoint
 
@@ -144,35 +168,55 @@ and write no migration to drop or rename these.
 Nothing writes `plans.abacatepay_product_id` any more; the field is retained for
 reconciliation only.
 
-⚠️ **One thing the next session must fix.** `invoices.abacatepay_billing_id` is currently the
-only external-payment-reference column in the schema, so the activation idempotency guard is
-temporarily wired to it:
+✅ **Resolved by `V30__add_invoice_payment_reference.sql`.** The stopgap that had the
+activation idempotency guard reading `invoices.abacatepay_billing_id` is gone:
 
+- `invoices.payment_reference` (`varchar(255)`, unique) is now the external-payment-reference
+  column. It holds the Stripe Checkout Session id (`cs_…`).
 - `Invoice.getExternalPaymentReference()` / `setExternalPaymentReference()` are `@Transient`
-  aliases over `abacatepayBillingId`.
-- `InvoiceRepository.findByExternalPaymentReference(...)` is an explicit `@Query` over the
-  same column.
+  aliases over `paymentReference`, and
+  `InvoiceRepository.findByExternalPaymentReference(...)` queries that column.
+- V30 backfills `payment_reference` from `abacatepay_billing_id` where present, so historical
+  AbacatePay references stay visible to the idempotency guard. Without that copy, a replayed
+  legacy webhook would activate a second period for an already-settled payment.
+- `abacatepay_billing_id` is now **frozen history**: nothing writes it.
 
-This is a stopgap so the guard stays functional and tested with no schema change. **The new
-provider must add its own column** (e.g. `invoices.payment_reference`) via a new migration
-and repoint those two accessors, so new payments never mix with AbacatePay reconciliation
-data. Everything else in the activation service is already provider-agnostic — that is the
-only edit.
+V30 was validated against a *populated* Postgres (rows seeded before the migration, backfill
+and the untouched legacy column asserted after), not just an empty one — an empty database
+cannot exercise the `UPDATE`, which is precisely how V29 reached production broken.
 
 Note: `invoices.stripe_invoice_id` also exists and predates AbacatePay. It is dead too.
 
 ---
 
-## Checklist for the next integration
+## Config
 
-1. Add the SDK/HTTP client under `backend/.../integration/<provider>/`.
-2. Implement `BillingProvider`; make it `@Primary` or delete `UnavailableBillingProvider`.
-3. Add a migration for the provider's own payment-reference column on `invoices`, and
-   repoint `Invoice.getExternalPaymentReference()` and
-   `InvoiceRepository.findByExternalPaymentReference(...)` to it.
-4. Add the webhook controller; call `SubscriptionActivationService.activatePaidSubscription`.
-5. Add `.requestMatchers("/api/webhooks/<provider>").permitAll()` to `SecurityConfig`.
-6. Add config properties + env vars (dev, prod, `.env.example`, test properties).
-7. Frontend: restore `billingService.createCheckout(plan.id)` in `SettingsView.vue` and
-   `PlansView.vue`, and remove the two unavailability notices.
-8. TDD throughout — see `.claude/docs/CODING_GUIDELINES.md`.
+| Env var | Sandbox | Production |
+|---|---|---|
+| `STRIPE_API_KEY` | `sk_test_…` / `rk_test_…` | `sk_live_…` / `rk_live_…` |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_…` (test endpoint or `stripe listen`) | `whsec_…` (live endpoint) |
+| `STRIPE_PRICE_BASICO` | `price_…` created in test mode | `price_…` created in live mode |
+| `APP_FRONTEND_BASE_URL` | `http://localhost:5173` | `https://app.jetmenu.com.br` |
+
+All default to empty, in `application-dev.properties`, `application-prod.properties`,
+`backend/.env.example` and `backend/src/test/resources/application.properties`. **Same code
+in both modes — only the values differ.** Register the webhook at `POST /api/webhooks/stripe`
+for `checkout.session.completed`.
+
+Price ids live in config, not in a `plans` column, so a new environment needs no database
+rows. Adding a plan means adding a `stripe.price-ids.<slug>` entry; a plan with no configured
+price id fails with 503 rather than silently succeeding.
+
+## State of the integration
+
+Done: Stripe SDK, `BillingProvider` implementation, `V30` + repointed accessors, webhook
+controller with signature verification, `SecurityConfig` entry, config/env vars, and the
+frontend call site restored in `SettingsView.vue`. Written test-first — 35 new tests, full
+backend suite 1063 passing.
+
+Note the in-app pricing page (`PlansView.vue`) no longer exists: pricing moved to the
+landing page, which links to `/checkout?plan=<slug>`. `SettingsView.vue` is now the only
+in-app checkout entry point, and it is the renew/upgrade path for a lapsed subscription.
+
+Remaining: recurring `invoice.paid` handling, and end-to-end verification against the Stripe
+sandbox (nothing here has run against a real Stripe account).
