@@ -1,16 +1,24 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { UI } from './tokens'
 import UIIcon from './UIIcon.vue'
 import { useAuthStore } from '@/stores/authStore'
 import { useSidebar } from '@/composables/useSidebar'
+import { useIfoodDiagnostics } from '@/composables/useIfoodDiagnostics'
 import type { DayOfWeek, OpeningHour } from '@/types/User'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const sidebar = useSidebar()
+const diagnostics = useIfoodDiagnostics()
+
+// Só aparece para as lojas em ifood.diagnostics-merchant-ids — a tela vai para produção,
+// mas fechada para quem não está na whitelist.
+onMounted(() => {
+  diagnostics.checkAccess()
+})
 
 const DAY_MAP: Record<number, DayOfWeek> = {
   0: 'SUNDAY', 1: 'MONDAY', 2: 'TUESDAY', 3: 'WEDNESDAY',
@@ -142,6 +150,16 @@ async function logout() {
     </nav>
 
     <div :style="{ padding: '12px', borderTop: '1px solid #1a2638', flexShrink: 0 }">
+      <button
+        v-if="diagnostics.isAllowed.value"
+        class="ui-diagnostics-btn"
+        data-testid="sidebar-diagnostics"
+        title="Diagnóstico iFood — Catálogo"
+        @click="diagnostics.open()"
+      >
+        <span class="ui-diagnostics-glyph">&lt;/&gt;</span>
+        <span>Diagnóstico iFood</span>
+      </button>
       <div
         :style="{
           background: '#0a1322',
@@ -260,6 +278,33 @@ async function logout() {
 .ui-nav.is-active:hover {
   background: #2563eb !important;
 }
+.ui-diagnostics-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: transparent;
+  border: 1px solid #1a2638;
+  border-radius: 8px;
+  color: #64748b;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.ui-diagnostics-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+}
+.ui-diagnostics-glyph {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: -0.5px;
+}
+
 .ui-logout-btn {
   background: transparent;
   border: none;
