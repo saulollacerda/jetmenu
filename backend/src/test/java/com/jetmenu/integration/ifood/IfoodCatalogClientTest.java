@@ -2,10 +2,12 @@ package com.jetmenu.integration.ifood;
 
 import com.jetmenu.integration.ifood.dto.IfoodCatalogCategoryResponse;
 import com.jetmenu.integration.ifood.dto.IfoodCatalogResponse;
+import com.jetmenu.integration.ifood.dto.IfoodRawResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -17,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 @DisplayName("IfoodCatalogClient")
@@ -153,6 +156,81 @@ class IfoodCatalogClientTest {
                 client.listCategories("access.jwt", "ifood-m1", "cat-default");
 
         assertThat(categories).isEmpty();
+        server.verify();
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Leituras cruas — usadas pela tela de diagnóstico da homologação, que precisa mostrar
+    // a resposta do iFood exatamente como veio, incluindo erros.
+    // ------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("rawCatalogs devolve URL, status e corpo sem desserializar")
+    void rawCatalogs_shouldReturnUntouchedBody() {
+        server.expect(requestTo(BASE_URL + "/merchants/ifood-m1/catalogs"))
+              .andExpect(method(HttpMethod.GET))
+              .andExpect(header("Authorization", "Bearer access.jwt"))
+              .andRespond(withSuccess("""
+                      [{"catalogId":"cat-default","context":["DEFAULT"]}]
+                      """, MediaType.APPLICATION_JSON));
+
+        IfoodRawResponse raw = client.rawCatalogs("access.jwt", "ifood-m1");
+
+        assertThat(raw.endpoint()).isEqualTo(BASE_URL + "/merchants/ifood-m1/catalogs");
+        assertThat(raw.status()).isEqualTo(200);
+        assertThat(raw.body()).contains("\"catalogId\":\"cat-default\"");
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("rawCategories pede itens junto e devolve o corpo cru")
+    void rawCategories_shouldRequestItemsAndReturnUntouchedBody() {
+        server.expect(requestTo(
+                        BASE_URL + "/merchants/ifood-m1/catalogs/cat-default/categories?includeItems=true"))
+              .andExpect(method(HttpMethod.GET))
+              .andExpect(header("Authorization", "Bearer access.jwt"))
+              .andRespond(withSuccess("""
+                      [{"id":"c1","name":"Lanches","items":[{"id":"i1","name":"X-Burger"}]}]
+                      """, MediaType.APPLICATION_JSON));
+
+        IfoodRawResponse raw = client.rawCategories("access.jwt", "ifood-m1", "cat-default");
+
+        assertThat(raw.endpoint())
+                .isEqualTo(BASE_URL + "/merchants/ifood-m1/catalogs/cat-default/categories?includeItems=true");
+        assertThat(raw.status()).isEqualTo(200);
+        assertThat(raw.body()).contains("X-Burger");
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("leitura crua devolve o erro do iFood em vez de lançar exceção")
+    void rawCatalogs_shouldReturnErrorBodyInsteadOfThrowing() {
+        server.expect(requestTo(BASE_URL + "/merchants/ifood-m1/catalogs"))
+              .andExpect(method(HttpMethod.GET))
+              .andRespond(withStatus(HttpStatus.FORBIDDEN)
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .body("""
+                            {"error":{"code":"403","message":"Merchant not allowed"}}
+                            """));
+
+        IfoodRawResponse raw = client.rawCatalogs("access.jwt", "ifood-m1");
+
+        assertThat(raw.status()).isEqualTo(403);
+        assertThat(raw.body()).contains("Merchant not allowed");
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("leitura crua devolve corpo vazio quando o iFood não manda conteúdo")
+    void rawCatalogs_shouldReturnEmptyBodyWhenNoContent() {
+        server.expect(requestTo(BASE_URL + "/merchants/ifood-m1/catalogs"))
+              .andExpect(method(HttpMethod.GET))
+              .andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+        IfoodRawResponse raw = client.rawCatalogs("access.jwt", "ifood-m1");
+
+        assertThat(raw.status()).isEqualTo(204);
+        assertThat(raw.body()).isEmpty();
         server.verify();
     }
 }

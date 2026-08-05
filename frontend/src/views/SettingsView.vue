@@ -5,7 +5,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { useAnotaAIStore } from '@/stores/anotaAIStore'
 import { useNotificationStore } from '@/stores/notificationStore'
 import { UI, UITopbar, UICard, UIBtn, UIField, UIInput, UIPill, UIIcon } from '@/design'
-import type { DayOfWeek, OpeningHour } from '@/types/User'
+import type { DayOfWeek, MerchantPreferences, OpeningHour } from '@/types/User'
+import { userService } from '@/services/userService'
 import { ifoodAuthService, type IfoodStatusResponse } from '@/services/ifoodAuthService'
 import { billingService } from '@/services/billingService'
 import type { PlanResponse, SubscriptionResponse } from '@/types/Billing'
@@ -25,7 +26,9 @@ const apiKey = ref('')
 const showKey = ref(false)
 const successMessage = ref<string | null>(null)
 const loadError = ref<string | null>(null)
-const section = ref<'loja' | 'ints' | 'horario' | 'alerta' | 'time' | 'billing' | 'danger'>('loja')
+const section = ref<
+  'loja' | 'ints' | 'horario' | 'pedidos' | 'alerta' | 'time' | 'billing' | 'danger'
+>('loja')
 
 const inputType = computed(() => (showKey.value ? 'text' : 'password'))
 
@@ -279,7 +282,70 @@ watch(section, (current) => {
   if (current === 'billing' && !billingLoaded.value && !billingLoading.value) {
     loadBilling()
   }
+  if (current === 'pedidos' && !preferences.value && !preferencesLoading.value) {
+    loadPreferences()
+  }
 })
+
+// ── Margem ideal do pedido ────────────────────────────────────────────────────────────
+// Guardamos as preferências inteiras porque o PUT sobrescreve o objeto todo no backend —
+// salvar só a margem apagaria as outras opções do lojista.
+
+const preferences = ref<MerchantPreferences | null>(null)
+const preferencesLoading = ref(false)
+const targetOrderMargin = ref('')
+const targetOrderMarginError = ref<string | null>(null)
+const targetOrderMarginSaved = ref(false)
+const savingTargetOrderMargin = ref(false)
+
+async function loadPreferences() {
+  preferencesLoading.value = true
+  targetOrderMarginError.value = null
+  try {
+    const loaded = await userService.getPreferences()
+    preferences.value = loaded
+    targetOrderMargin.value =
+      loaded.targetOrderMarginPct != null ? String(loaded.targetOrderMarginPct) : ''
+  } catch {
+    targetOrderMarginError.value =
+      'Não foi possível carregar as configurações de pedidos. Recarregue a página.'
+  } finally {
+    preferencesLoading.value = false
+  }
+}
+
+/** Campo vazio = voltar a não acompanhar. `undefined` sinaliza entrada inválida. */
+function parseTargetOrderMargin(raw: string): number | null | undefined {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const parsed = Number(trimmed.replace(',', '.'))
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return undefined
+  return parsed
+}
+
+async function saveTargetOrderMargin() {
+  const parsed = parseTargetOrderMargin(targetOrderMargin.value)
+  if (parsed === undefined) {
+    targetOrderMarginSaved.value = false
+    targetOrderMarginError.value = 'Informe um percentual entre 0 e 100.'
+    return
+  }
+  savingTargetOrderMargin.value = true
+  targetOrderMarginError.value = null
+  targetOrderMarginSaved.value = false
+  try {
+    const current = preferences.value ?? (await userService.getPreferences())
+    preferences.value = await userService.updatePreferences({
+      ...current,
+      targetOrderMarginPct: parsed,
+    })
+    targetOrderMarginSaved.value = true
+  } catch {
+    targetOrderMarginError.value = 'Não foi possível salvar a margem ideal. Tente novamente.'
+  } finally {
+    savingTargetOrderMargin.value = false
+  }
+}
 
 const SUBNAV: Array<{
   id: typeof section.value
@@ -290,6 +356,7 @@ const SUBNAV: Array<{
   { id: 'loja', ic: 'box', l: 'Perfil da loja' },
   { id: 'ints', ic: 'sync', l: 'Integrações' },
   { id: 'horario', ic: 'clock', l: 'Horários' },
+  { id: 'pedidos', ic: 'cart', l: 'Pedidos' },
   { id: 'alerta', ic: 'bell', l: 'Alertas' },
   { id: 'time', ic: 'user', l: 'Time' },
   { id: 'billing', ic: 'card', l: 'Plano e pagamento' },
@@ -1261,6 +1328,77 @@ onMounted(async () => {
 
           <div style="margin-top: 18px; display: flex; justify-content: flex-end">
             <UIBtn :loading="hoursSaving" @click="saveHours">Salvar horários</UIBtn>
+          </div>
+        </UICard>
+
+        <!-- Pedidos -->
+        <UICard v-if="section === 'pedidos'" :padding="22">
+          <div
+            :style="{
+              fontSize: '16px',
+              fontWeight: 700,
+              color: UI.text,
+              letterSpacing: '-0.3px',
+              marginBottom: '6px',
+            }"
+          >
+            Pedidos
+          </div>
+          <div :style="{ fontSize: '12.5px', color: UI.textSub, marginBottom: '18px' }">
+            Metas usadas para avaliar cada pedido na tela de Pedidos.
+          </div>
+
+          <UIField
+            label="Margem ideal do pedido (%)"
+            hint="Cada pedido é comparado com esta meta, já descontadas as taxas de entrega, serviço e meio de pagamento. Deixe em branco para não acompanhar."
+          >
+            <UIInput
+              v-model="targetOrderMargin"
+              data-testid="target-order-margin-input"
+              placeholder="Ex.: 30"
+              inputmode="decimal"
+              :disabled="preferencesLoading"
+            />
+          </UIField>
+
+          <div
+            v-if="targetOrderMarginError"
+            data-testid="target-order-margin-error"
+            :style="{
+              marginTop: '12px',
+              padding: '10px 14px',
+              background: UI.roseBg,
+              color: UI.rose2,
+              borderRadius: '9px',
+              fontSize: '13px',
+            }"
+          >
+            {{ targetOrderMarginError }}
+          </div>
+
+          <div
+            v-if="targetOrderMarginSaved"
+            data-testid="target-order-margin-saved"
+            :style="{
+              marginTop: '12px',
+              padding: '10px 14px',
+              background: UI.emeraldBg,
+              color: UI.emerald2,
+              borderRadius: '9px',
+              fontSize: '13px',
+            }"
+          >
+            Margem ideal salva.
+          </div>
+
+          <div style="margin-top: 18px; display: flex; justify-content: flex-end">
+            <UIBtn
+              data-testid="target-order-margin-save"
+              :loading="savingTargetOrderMargin"
+              @click="saveTargetOrderMargin"
+            >
+              Salvar
+            </UIBtn>
           </div>
         </UICard>
 

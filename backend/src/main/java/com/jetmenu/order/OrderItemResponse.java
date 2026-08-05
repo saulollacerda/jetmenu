@@ -28,10 +28,17 @@ public class OrderItemResponse {
     private BigDecimal targetMarginPct;
 
     /**
-     * Margem (%) realmente obtida neste item do pedido: {@code (unitPrice − unitCost) /
-     * unitPrice × 100}, com o unitCost já incluindo ficha técnica e extras. Nula quando o
-     * item não tem preço unitário ou o preço é zero. A comparação com
-     * {@link #targetMarginPct} é feita pela UI.
+     * Margem (%) realmente obtida neste item do pedido: {@code (valor cobrado − totalCost) /
+     * valor cobrado × 100}.
+     *
+     * <p>O valor cobrado é {@code unitPrice × quantity} mais o que o cliente pagou pelos
+     * adicionais, e o {@code totalCost} já inclui ficha técnica e extras — os dois lados
+     * contam os adicionais. Apurar só sobre {@code unitPrice} subestimava a margem dos itens
+     * com adicionais pagos, porque descontava o custo do extra de uma receita que não incluía
+     * o que foi pago por ele.</p>
+     *
+     * <p>Nula quando o item não tem preço unitário ou o valor cobrado é zero. A comparação
+     * com {@link #targetMarginPct} é feita pela UI.</p>
      */
     private BigDecimal marginPct;
 

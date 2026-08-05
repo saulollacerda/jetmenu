@@ -420,5 +420,25 @@ defineProps<{ name: string; size?: number }>()
         stroke-linejoin="round"
       />
     </template>
+    <template v-else-if="name === 'expand'">
+      <path
+        d="M12 3h5v5M17 3l-6 6M8 17H3v-5M3 17l6-6"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </template>
+    <template v-else-if="name === 'collapse'">
+      <path
+        d="M17 3l-6 6M11 4v5h5M3 17l6-6M9 16v-5H4"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </template>
   </svg>
 </template>
