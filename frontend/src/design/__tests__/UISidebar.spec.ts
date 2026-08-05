@@ -16,8 +16,14 @@ vi.mock('@/stores/authStore', () => ({
   }),
 }))
 
+vi.mock('@/services/ifoodDiagnosticsService', () => ({
+  ifoodDiagnosticsService: { isEnabled: vi.fn().mockResolvedValue(false) },
+}))
+
 import UISidebar from '@/design/UISidebar.vue'
 import { useSidebar } from '@/composables/useSidebar'
+import { useIfoodDiagnostics } from '@/composables/useIfoodDiagnostics'
+import { ifoodDiagnosticsService } from '@/services/ifoodDiagnosticsService'
 
 describe('UISidebar — drawer mobile', () => {
   beforeEach(() => {
@@ -62,3 +68,43 @@ describe('UISidebar — drawer mobile', () => {
     expect(useSidebar().isOpen.value).toBe(false)
   })
 })
+
+describe('UISidebar — diagnóstico iFood', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useIfoodDiagnostics().close()
+  })
+
+  it('não oferece o diagnóstico para lojas fora da whitelist', async () => {
+    vi.mocked(ifoodDiagnosticsService.isEnabled).mockResolvedValue(false)
+
+    const wrapper = mount(UISidebar)
+    await flush()
+
+    expect(wrapper.find('[data-testid="sidebar-diagnostics"]').exists()).toBe(false)
+  })
+
+  it('mostra o botão </> quando a loja está liberada', async () => {
+    vi.mocked(ifoodDiagnosticsService.isEnabled).mockResolvedValue(true)
+
+    const wrapper = mount(UISidebar)
+    await flush()
+
+    expect(wrapper.find('[data-testid="sidebar-diagnostics"]').exists()).toBe(true)
+  })
+
+  it('clicar no botão abre a janela de diagnóstico', async () => {
+    vi.mocked(ifoodDiagnosticsService.isEnabled).mockResolvedValue(true)
+
+    const wrapper = mount(UISidebar)
+    await flush()
+    await wrapper.find('[data-testid="sidebar-diagnostics"]').trigger('click')
+
+    expect(useIfoodDiagnostics().isOpen.value).toBe(true)
+  })
+})
+
+/** Deixa a checagem de acesso (assíncrona, no mount) resolver antes do assert. */
+async function flush() {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}

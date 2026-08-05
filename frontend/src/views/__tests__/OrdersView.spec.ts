@@ -37,6 +37,13 @@ vi.mock('@/stores/authStore', () => ({
   useAuthStore: () => ({ currentUser: null }),
 }))
 
+vi.mock('@/services/userService', () => ({
+  userService: {
+    getPreferences: vi.fn(),
+    updatePreferences: vi.fn(),
+  },
+}))
+
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
   useRoute: () => ({ query: {} }),
@@ -83,6 +90,21 @@ vi.mock('@/services/ifoodOrderActionService', async (importOriginal) => {
 
 import OrdersView from '@/views/OrdersView.vue'
 import { UI } from '@/design'
+import { userService } from '@/services/userService'
+import type { MerchantPreferences } from '@/types/User'
+
+const mockedUserService = vi.mocked(userService)
+
+function preferencesOf(overrides: Partial<MerchantPreferences> = {}): MerchantPreferences {
+  return {
+    realtimeMarginCalc: true,
+    marginAlertBelow50Pct: false,
+    warnUnregisteredIngredients: true,
+    includePackagingCostInCost: true,
+    targetOrderMarginPct: null,
+    ...overrides,
+  }
+}
 
 const showToastMock = vi.fn()
 vi.mock('@/composables/useToast', () => ({
@@ -92,6 +114,8 @@ vi.mock('@/composables/useToast', () => ({
 describe('OrdersView', () => {
   beforeEach(() => {
     showToastMock.mockClear()
+    mockedUserService.getPreferences.mockReset()
+    mockedUserService.getPreferences.mockResolvedValue(preferencesOf())
     ifoodOrderActionMock.confirm.mockReset()
     ifoodOrderActionMock.readyToPickup.mockReset()
     ifoodOrderActionMock.dispatch.mockReset()
@@ -1746,6 +1770,87 @@ describe('OrdersView', () => {
       expect(detail.get('[data-testid="item-oi1-margin"]').attributes('style')).toContain(
         `color: ${rgb(UI.textMute)}`,
       )
+    })
+  })
+
+  describe('order target margin indicator', () => {
+    // O style inline é normalizado para rgb() pelo jsdom.
+    function rgb(hex: string): string {
+      const n = parseInt(hex.slice(1), 16)
+      return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`
+    }
+
+    function orderWith(marginPct: number | null) {
+      return {
+        id: 'o1',
+        dateTime: '2026-05-14T10:00:00',
+        customerId: 'c1',
+        customerName: 'João',
+        status: 'PAID',
+        totalValue: 30,
+        estimatedProfit: 13,
+        marginPct,
+        items: [],
+      }
+    }
+
+    async function mountWith(marginPct: number | null, target: number | null) {
+      mockedUserService.getPreferences.mockResolvedValue(
+        preferencesOf({ targetOrderMarginPct: target }),
+      )
+      orderStoreMock.items = [orderWith(marginPct)]
+      const wrapper = mount(OrdersView)
+      await flushPromises()
+      return wrapper
+    }
+
+    it('mantém a margem neutra quando a loja não configurou margem ideal', async () => {
+      const wrapper = await mountWith(43.3, null)
+
+      expect(wrapper.get('[data-testid="order-o1-margin"]').attributes('style')).toContain(
+        `color: ${rgb(UI.textSub)}`,
+      )
+    })
+
+    it('pinta de vermelho o pedido abaixo da margem ideal', async () => {
+      const wrapper = await mountWith(20, 30)
+
+      expect(wrapper.get('[data-testid="order-o1-margin"]').attributes('style')).toContain(
+        `color: ${rgb(UI.rose)}`,
+      )
+    })
+
+    it('pinta de verde o pedido acima da margem ideal', async () => {
+      const wrapper = await mountWith(43.3, 30)
+
+      expect(wrapper.get('[data-testid="order-o1-margin"]').attributes('style')).toContain(
+        `color: ${rgb(UI.emerald2)}`,
+      )
+    })
+
+    it('não pinta quando o backend não apurou a margem do pedido', async () => {
+      const wrapper = await mountWith(null, 30)
+
+      expect(wrapper.get('[data-testid="order-o1-margin"]').attributes('style')).toContain(
+        `color: ${rgb(UI.textSub)}`,
+      )
+      expect(wrapper.get('[data-testid="order-o1-margin"]').text()).toBe('—')
+    })
+
+    it('mostra a meta ao lado da margem no detalhe do pedido', async () => {
+      const wrapper = await mountWith(43.3, 30)
+      await wrapper.get('[data-testid="order-o1-detail-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="order-detail-margin"]').text()).toBe('43,3% · meta 30,0%')
+    })
+
+    it('não mostra meta no detalhe quando a loja não acompanha margem do pedido', async () => {
+      const wrapper = await mountWith(43.3, null)
+      await wrapper.get('[data-testid="order-o1-detail-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="order-detail-margin"]').text()).toBe('43,3%')
     })
   })
 })

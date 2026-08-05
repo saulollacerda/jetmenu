@@ -38,6 +38,7 @@ import type { IngredientRequest } from '@/types/Ingredient'
 import type { IncludeResponse } from '@/types/Product'
 import type { OrderFichaLineRequest } from '@/types/OrderFicha'
 import { includeService } from '@/services/includeService'
+import { userService } from '@/services/userService'
 import { orderFichaService } from '@/services/orderFichaService'
 import { useToast } from '@/composables/useToast'
 import IfoodOrderTicketModal from '@/components/IfoodOrderTicketModal.vue'
@@ -315,6 +316,50 @@ function marginPct(v: number | string): string {
 function marginLabel(o: OrderResponse): string {
   if (o.marginPct == null) return '—'
   return marginPct(o.marginPct)
+}
+
+/**
+ * No detalhe cabe explicar o número; na listagem a cor já basta e repetir a meta em toda
+ * linha só faria ruído.
+ */
+function orderMarginDetailLabel(o: OrderResponse): string {
+  if (o.marginPct == null || targetOrderMarginPct.value == null) return marginLabel(o)
+  return `${marginPct(o.marginPct)} · meta ${marginPct(targetOrderMarginPct.value)}`
+}
+
+/**
+ * Margem ideal do pedido inteiro, configurada em Configurações › Pedidos. Diferente da
+ * margem ideal do produto (gravada como snapshot no item), esta é a configuração vigente:
+ * pedidos antigos são comparados com a meta de hoje. Null = a loja não acompanha.
+ */
+const targetOrderMarginPct = ref<number | null>(null)
+
+/** Null quando não há o que comparar — sem meta, ou sem margem apurada pelo backend. */
+function orderMarginStatus(o: OrderResponse): 'below' | 'above' | 'equal' | null {
+  if (targetOrderMarginPct.value == null || o.marginPct == null) return null
+  const realised = Number(o.marginPct)
+  const target = Number(targetOrderMarginPct.value)
+  if (realised < target) return 'below'
+  if (realised > target) return 'above'
+  return 'equal'
+}
+
+/** Sem comparação possível a margem fica com a cor neutra de sempre. */
+function orderMarginColor(o: OrderResponse): string {
+  const status = orderMarginStatus(o)
+  if (status === 'below') return UI.rose
+  if (status === 'above') return UI.emerald2
+  return UI.textSub
+}
+
+async function loadTargetOrderMargin() {
+  try {
+    const preferences = await userService.getPreferences()
+    targetOrderMarginPct.value = preferences.targetOrderMarginPct
+  } catch {
+    // Sem a meta a tela segue funcionando: a margem só fica sem comparação.
+    targetOrderMarginPct.value = null
+  }
 }
 
 /** Como a margem realizada do item se saiu contra a margem ideal gravada nele. */
@@ -650,6 +695,7 @@ onMounted(() => {
   productStore.fetchAll()
   ingredientStore.fetchAll()
   feeStore.fetchAll()
+  loadTargetOrderMargin()
 })
 
 // Atualização automática a cada 10 minutos, em segundo plano (silent) para não piscar.
@@ -926,7 +972,8 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
               :data-testid="`order-${o.id}-margin`"
               :style="{
                 textAlign: 'right',
-                color: UI.textSub,
+                color: orderMarginColor(o),
+                fontWeight: orderMarginStatus(o) ? 600 : 400,
                 fontVariantNumeric: 'tabular-nums',
               }"
             >
@@ -1703,9 +1750,14 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
             </span>
             <span
               data-testid="order-detail-margin"
-              :style="{ fontSize: '11px', color: UI.textSub, marginLeft: '6px' }"
+              :style="{
+                fontSize: '11px',
+                color: orderMarginColor(selectedOrder),
+                fontWeight: orderMarginStatus(selectedOrder) ? 600 : 400,
+                marginLeft: '6px',
+              }"
             >
-              {{ marginLabel(selectedOrder) }}
+              {{ orderMarginDetailLabel(selectedOrder) }}
             </span>
           </div>
         </div>

@@ -1,5 +1,10 @@
 import api from './api'
-import type { AnotaAIKeyRequest, OpeningHour, UserResponse } from '@/types/User'
+import type {
+  AnotaAIKeyRequest,
+  MerchantPreferences,
+  OpeningHour,
+  UserResponse,
+} from '@/types/User'
 
 export const userService = {
   /** Current authenticated merchant (resolved server-side from the token). */
@@ -15,6 +20,17 @@ export const userService = {
 
   async updateMe(payload: { openingHours: OpeningHour[] }): Promise<UserResponse> {
     const { data } = await api.put<UserResponse>('/merchants/me', payload)
+    return data
+  },
+
+  async getPreferences(): Promise<MerchantPreferences> {
+    const { data } = await api.get<MerchantPreferences>('/merchants/me/preferences')
+    return data
+  },
+
+  /** O backend sobrescreve as preferências inteiras — envie o objeto completo. */
+  async updatePreferences(preferences: MerchantPreferences): Promise<MerchantPreferences> {
+    const { data } = await api.put<MerchantPreferences>('/merchants/me/preferences', preferences)
     return data
   },
 }

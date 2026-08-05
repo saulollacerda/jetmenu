@@ -9,6 +9,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -395,6 +396,55 @@ class MerchantServiceTest {
             assertThat(result).isNotNull();
             assertThat(result.isRealtimeMarginCalc()).isTrue();
             assertThat(result.isMarginAlertBelow50Pct()).isFalse();
+            // null = lojista ainda não definiu margem ideal para o pedido inteiro
+            assertThat(result.getTargetOrderMarginPct()).isNull();
+        }
+
+        @Test
+        @DisplayName("getMyPreferences deve retornar a margem ideal do pedido quando definida")
+        void getMyPreferencesShouldReturnTargetOrderMargin() {
+            merchant.setPreferences(MerchantPreferences.builder()
+                    .targetOrderMarginPct(new BigDecimal("32.50"))
+                    .build());
+
+            given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
+
+            MerchantPreferences result = merchantService.getMyPreferences(merchantId);
+
+            assertThat(result.getTargetOrderMarginPct()).isEqualByComparingTo("32.50");
+        }
+
+        @Test
+        @DisplayName("updateMyPreferences deve gravar a margem ideal do pedido")
+        void updateMyPreferencesShouldPersistTargetOrderMargin() {
+            MerchantPreferences toSave = MerchantPreferences.builder()
+                    .targetOrderMarginPct(new BigDecimal("28.00"))
+                    .build();
+
+            given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
+            given(merchantRepository.save(any(Merchant.class))).willAnswer(inv -> inv.getArgument(0));
+
+            MerchantPreferences result = merchantService.updateMyPreferences(merchantId, toSave);
+
+            assertThat(result.getTargetOrderMarginPct()).isEqualByComparingTo("28.00");
+        }
+
+        @Test
+        @DisplayName("updateMyPreferences deve aceitar limpar a margem ideal do pedido")
+        void updateMyPreferencesShouldAllowClearingTargetOrderMargin() {
+            merchant.setPreferences(MerchantPreferences.builder()
+                    .targetOrderMarginPct(new BigDecimal("28.00"))
+                    .build());
+            MerchantPreferences toSave = MerchantPreferences.builder()
+                    .targetOrderMarginPct(null)
+                    .build();
+
+            given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
+            given(merchantRepository.save(any(Merchant.class))).willAnswer(inv -> inv.getArgument(0));
+
+            MerchantPreferences result = merchantService.updateMyPreferences(merchantId, toSave);
+
+            assertThat(result.getTargetOrderMarginPct()).isNull();
         }
 
         @Test
