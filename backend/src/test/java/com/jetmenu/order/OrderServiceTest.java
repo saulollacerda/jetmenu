@@ -817,6 +817,85 @@ class OrderServiceTest {
         }
 
         @Test
+        @DisplayName("margem do item deve contar o valor pago pelos adicionais, não só o preço do produto")
+        void shouldIncludePaidExtrasRevenueInItemMargin() {
+            OrderItemExtraIngredient paidExtra = OrderItemExtraIngredient.builder()
+                    .id(UUID.randomUUID())
+                    .ingredient(ingredient)
+                    .quantity(new BigDecimal("100"))
+                    .costPerUnit(new BigDecimal("0.10"))
+                    .salePricePerUnit(new BigDecimal("8.0000"))
+                    .salePriceTotal(new BigDecimal("8.0000"))   // o cliente pagou R$ 8,00 a mais
+                    .ingredientName("Pistache")
+                    .ingredientUnit("g")
+                    .build();
+            order.getItems().get(0).setExtraIngredients(new ArrayList<>(List.of(paidExtra)));
+
+            // unitCost = ficha técnica (12) + extra (100g × 0,10 = 10) = 22 — o custo do
+            // adicional JÁ entra aqui, então a receita dele também precisa entrar.
+            given(orderCostCalculatorService.computeItemUnitCost(any(OrderItem.class), eq(merchantId)))
+                    .willReturn(new BigDecimal("22.00"));
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.findById(merchantId, orderId);
+
+            // cobrado = 30,00 × 2 + 8,00 = 68,00 ; custo = 22,00 × 2 = 44,00
+            // (68 − 44) / 68 × 100 = 35,29 — e NÃO (30 − 22) / 30 = 26,67, que descontava
+            // o custo do adicional de uma receita que não incluía o que foi pago por ele.
+            assertThat(result.getItems().get(0).getMarginPct())
+                    .isEqualByComparingTo(new BigDecimal("35.29"));
+        }
+
+        @Test
+        @DisplayName("complemento base (preço zero) não infla a receita do item")
+        void shouldNotCountFreeExtrasAsRevenueInItemMargin() {
+            OrderItemExtraIngredient freeExtra = OrderItemExtraIngredient.builder()
+                    .id(UUID.randomUUID())
+                    .ingredient(ingredient)
+                    .quantity(new BigDecimal("100"))
+                    .costPerUnit(new BigDecimal("0.10"))
+                    .salePricePerUnit(BigDecimal.ZERO)
+                    .salePriceTotal(BigDecimal.ZERO)            // incluso, sem valor agregado
+                    .ingredientName("Granola")
+                    .ingredientUnit("g")
+                    .build();
+            order.getItems().get(0).setExtraIngredients(new ArrayList<>(List.of(freeExtra)));
+
+            given(orderCostCalculatorService.computeItemUnitCost(any(OrderItem.class), eq(merchantId)))
+                    .willReturn(new BigDecimal("22.00"));
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.findById(merchantId, orderId);
+
+            // cobrado = 30,00 × 2 = 60,00 ; custo = 44,00 → (60 − 44) / 60 × 100 = 26,67
+            assertThat(result.getItems().get(0).getMarginPct())
+                    .isEqualByComparingTo(new BigDecimal("26.67"));
+        }
+
+        @Test
+        @DisplayName("extra sem preço conhecido não entra na receita, mantendo o item no preço base")
+        void shouldIgnoreUnpricedExtrasInItemMarginRevenue() {
+            OrderItemExtraIngredient unpricedExtra = OrderItemExtraIngredient.builder()
+                    .id(UUID.randomUUID())
+                    .ingredient(ingredient)
+                    .quantity(new BigDecimal("100"))
+                    .costPerUnit(new BigDecimal("0.10"))
+                    .ingredientName("Bacon")                    // salePriceTotal nulo (legado/manual)
+                    .ingredientUnit("g")
+                    .build();
+            order.getItems().get(0).setExtraIngredients(new ArrayList<>(List.of(unpricedExtra)));
+
+            given(orderCostCalculatorService.computeItemUnitCost(any(OrderItem.class), eq(merchantId)))
+                    .willReturn(new BigDecimal("22.00"));
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.findById(merchantId, orderId);
+
+            assertThat(result.getItems().get(0).getMarginPct())
+                    .isEqualByComparingTo(new BigDecimal("26.67"));
+        }
+
+        @Test
         @DisplayName("extras sem preço (pedidos manuais/importados antes da V16) devem tolerar valor nulo")
         void shouldTolerateNullSalePriceForLegacyExtras() {
             OrderItemExtraIngredient legacyExtra = OrderItemExtraIngredient.builder()
