@@ -37,6 +37,7 @@ import type {
 import type { IngredientRequest } from '@/types/Ingredient'
 import type { IncludeResponse } from '@/types/Product'
 import type { OrderFichaLineRequest } from '@/types/OrderFicha'
+import type { MerchantPreferences } from '@/types/User'
 import { includeService } from '@/services/includeService'
 import { userService } from '@/services/userService'
 import { orderFichaService } from '@/services/orderFichaService'
@@ -145,6 +146,8 @@ const loadingFicha = ref(false)
 const savingFicha = ref(false)
 const fichaError = ref<string | null>(null)
 const fichaLines = ref<OrderFichaLineRequest[]>([])
+/** Campo da margem ideal do pedido, como texto — aceita vírgula e vazio. */
+const targetOrderMarginInput = ref('')
 
 const ingredientOptions = computed(() =>
   ingredientStore.items.map((i) => ({ id: i.id, label: `${i.name} (${i.unit})` })),
@@ -167,6 +170,12 @@ async function openFichaModal() {
   fichaError.value = null
   loadingFicha.value = true
   try {
+    // As preferências já foram buscadas no mount; refaz a busca só se aquela falhou,
+    // para o campo nunca abrir vazio quando existe meta gravada.
+    if (!preferences.value) await loadPreferences()
+    targetOrderMarginInput.value =
+      targetOrderMarginPct.value != null ? String(targetOrderMarginPct.value) : ''
+
     const ficha = await orderFichaService.find()
     fichaLines.value = ficha.lines.map((l) => ({
       ingredientId: l.ingredientId,
@@ -262,8 +271,28 @@ async function submitNewInsumo() {
   }
 }
 
+/** Campo vazio = voltar a não acompanhar. `undefined` sinaliza entrada inválida. */
+function parseTargetOrderMargin(raw: string): number | null | undefined {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const parsed = Number(trimmed.replace(',', '.'))
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return undefined
+  return parsed
+}
+
+/**
+ * Salva as duas configurações do modal. Tudo é validado antes de qualquer chamada, e a
+ * margem vai primeiro: se ela falhar, a ficha não é tocada, para o lojista não sair daqui
+ * com metade salva.
+ */
 async function saveFicha() {
   fichaError.value = null
+
+  const targetMargin = parseTargetOrderMargin(targetOrderMarginInput.value)
+  if (targetMargin === undefined) {
+    fichaError.value = 'Informe uma margem ideal entre 0 e 100.'
+    return
+  }
 
   if (fichaLines.value.some((l) => !l.ingredientId)) {
     fichaError.value = 'Selecione o insumo em todas as linhas.'
@@ -281,6 +310,18 @@ async function saveFicha() {
 
   savingFicha.value = true
   try {
+    const current = preferences.value ?? (await userService.getPreferences())
+    preferences.value = await userService.updatePreferences({
+      ...current,
+      targetOrderMarginPct: targetMargin,
+    })
+  } catch {
+    fichaError.value = 'Não foi possível salvar a margem ideal. Tente novamente.'
+    savingFicha.value = false
+    return
+  }
+
+  try {
     await orderFichaService.replace({
       lines: fichaLines.value.map((l) => ({
         ingredientId: l.ingredientId,
@@ -288,7 +329,7 @@ async function saveFicha() {
       })),
     })
     showFichaModal.value = false
-    showToast('Ficha do pedido salva. Vale para os próximos pedidos.', 'success')
+    showToast('Configurações do pedido salvas. Valem para os próximos pedidos.', 'success')
   } catch {
     fichaError.value = 'Não foi possível salvar a ficha do pedido.'
   } finally {
@@ -328,11 +369,17 @@ function orderMarginDetailLabel(o: OrderResponse): string {
 }
 
 /**
- * Margem ideal do pedido inteiro, configurada em Configurações › Pedidos. Diferente da
- * margem ideal do produto (gravada como snapshot no item), esta é a configuração vigente:
+ * Preferências do lojista, guardadas inteiras porque o PUT sobrescreve o objeto todo —
+ * salvar só a margem apagaria as outras opções.
+ */
+const preferences = ref<MerchantPreferences | null>(null)
+
+/**
+ * Margem ideal do pedido inteiro, editada em "Configurar pedidos". Diferente da margem
+ * ideal do produto (gravada como snapshot no item), esta é a configuração vigente:
  * pedidos antigos são comparados com a meta de hoje. Null = a loja não acompanha.
  */
-const targetOrderMarginPct = ref<number | null>(null)
+const targetOrderMarginPct = computed(() => preferences.value?.targetOrderMarginPct ?? null)
 
 /** Null quando não há o que comparar — sem meta, ou sem margem apurada pelo backend. */
 function orderMarginStatus(o: OrderResponse): 'below' | 'above' | 'equal' | null {
@@ -352,13 +399,12 @@ function orderMarginColor(o: OrderResponse): string {
   return UI.textSub
 }
 
-async function loadTargetOrderMargin() {
+async function loadPreferences() {
   try {
-    const preferences = await userService.getPreferences()
-    targetOrderMarginPct.value = preferences.targetOrderMarginPct
+    preferences.value = await userService.getPreferences()
   } catch {
-    // Sem a meta a tela segue funcionando: a margem só fica sem comparação.
-    targetOrderMarginPct.value = null
+    // Sem as preferências a tela segue funcionando: a margem só fica sem comparação.
+    preferences.value = null
   }
 }
 
@@ -695,7 +741,7 @@ onMounted(() => {
   productStore.fetchAll()
   ingredientStore.fetchAll()
   feeStore.fetchAll()
-  loadTargetOrderMargin()
+  loadPreferences()
 })
 
 // Atualização automática a cada 10 minutos, em segundo plano (silent) para não piscar.
@@ -1068,11 +1114,11 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
       </div>
     </div>
 
-    <!-- Configurar pedidos — ficha do pedido (insumos cobrados uma vez por pedido) -->
+    <!-- Configurar pedidos — margem ideal do pedido e ficha (insumos por pedido) -->
     <UIModal
       v-if="showFichaModal"
       title="Configurar pedidos"
-      subtitle="Insumos cobrados uma vez por pedido, não por item"
+      subtitle="Meta de margem e insumos cobrados uma vez por pedido"
       :width="640"
       data-testid="order-ficha-modal"
       @close="closeFichaModal"
@@ -1081,6 +1127,35 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
         Carregando…
       </div>
       <div v-else style="display: flex; flex-direction: column; gap: 16px">
+        <!-- Margem ideal: meta contra a qual todo pedido é comparado na listagem -->
+        <div>
+          <div
+            :style="{
+              fontSize: '13px',
+              fontWeight: 700,
+              color: UI.text,
+              marginBottom: '10px',
+            }"
+          >
+            Margem ideal do pedido
+          </div>
+          <!-- Campo estreito, dica em largura cheia: o texto explica a base de cálculo e
+               não deve quebrar em quatro linhas ao lado de um input de 220px. -->
+          <UIField
+            label="Margem ideal (%)"
+            hint="Cada pedido é comparado com esta meta, já descontadas as taxas de entrega, serviço e meio de pagamento. Deixe em branco para não acompanhar."
+          >
+            <UIInput
+              v-model="targetOrderMarginInput"
+              data-testid="target-order-margin-input"
+              placeholder="Ex.: 30"
+              inputmode="decimal"
+              width="220px"
+            />
+          </UIField>
+        </div>
+
+        <div :style="{ height: '1px', background: UI.borderSub }" />
         <div
           data-testid="order-ficha-intro"
           :style="{
