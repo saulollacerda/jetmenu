@@ -116,6 +116,8 @@ describe('OrdersView', () => {
     showToastMock.mockClear()
     mockedUserService.getPreferences.mockReset()
     mockedUserService.getPreferences.mockResolvedValue(preferencesOf())
+    mockedUserService.updatePreferences.mockReset()
+    mockedUserService.updatePreferences.mockImplementation(async (prefs) => prefs)
     ifoodOrderActionMock.confirm.mockReset()
     ifoodOrderActionMock.readyToPickup.mockReset()
     ifoodOrderActionMock.dispatch.mockReset()
@@ -1430,6 +1432,119 @@ describe('OrdersView', () => {
 
       expect(orderFichaReplaceMock).toHaveBeenCalledWith({
         lines: [{ ingredientId: 'i1', quantity: 3 }],
+      })
+    })
+
+    describe('margem ideal do pedido', () => {
+      async function openModal() {
+        const wrapper = mount(OrdersView)
+        await wrapper.get('[data-testid="configure-orders-button"]').trigger('click')
+        await flushPromises()
+        return wrapper
+      }
+
+      it('traz a margem ideal já configurada no campo', async () => {
+        mockedUserService.getPreferences.mockResolvedValue(
+          preferencesOf({ targetOrderMarginPct: 32 }),
+        )
+
+        const wrapper = await openModal()
+
+        const field = wrapper.get('[data-testid="target-order-margin-input"]')
+        expect((field.element as HTMLInputElement).value).toBe('32')
+      })
+
+      it('deixa o campo vazio quando a loja ainda não acompanha margem do pedido', async () => {
+        const wrapper = await openModal()
+
+        const field = wrapper.get('[data-testid="target-order-margin-input"]')
+        expect((field.element as HTMLInputElement).value).toBe('')
+      })
+
+      it('salva a margem junto com a ficha, preservando as outras preferências', async () => {
+        const wrapper = await openModal()
+
+        await wrapper.get('[data-testid="target-order-margin-input"]').setValue('28,5')
+        await wrapper.get('[data-testid="order-ficha-save-button"]').trigger('click')
+        await flushPromises()
+
+        // o PUT sobrescreve as prefs inteiras — os outros campos têm de ir junto
+        expect(mockedUserService.updatePreferences).toHaveBeenCalledWith({
+          ...preferencesOf(),
+          targetOrderMarginPct: 28.5,
+        })
+        expect(orderFichaReplaceMock).toHaveBeenCalled()
+      })
+
+      it('campo vazio limpa a margem ideal (volta a não acompanhar)', async () => {
+        mockedUserService.getPreferences.mockResolvedValue(
+          preferencesOf({ targetOrderMarginPct: 32 }),
+        )
+        const wrapper = await openModal()
+
+        await wrapper.get('[data-testid="target-order-margin-input"]').setValue('')
+        await wrapper.get('[data-testid="order-ficha-save-button"]').trigger('click')
+        await flushPromises()
+
+        expect(mockedUserService.updatePreferences).toHaveBeenCalledWith({
+          ...preferencesOf(),
+          targetOrderMarginPct: null,
+        })
+      })
+
+      it('recusa percentual fora de 0–100 sem salvar nada', async () => {
+        const wrapper = await openModal()
+
+        await wrapper.get('[data-testid="target-order-margin-input"]').setValue('120')
+        await wrapper.get('[data-testid="order-ficha-save-button"]').trigger('click')
+        await flushPromises()
+
+        expect(wrapper.get('[data-testid="order-ficha-error"]').text()).toContain('0 e 100')
+        expect(mockedUserService.updatePreferences).not.toHaveBeenCalled()
+        // a margem inválida não pode deixar a ficha ser gravada pela metade
+        expect(orderFichaReplaceMock).not.toHaveBeenCalled()
+      })
+
+      it('avisa em pt-BR quando o save da margem falha e não grava a ficha', async () => {
+        mockedUserService.updatePreferences.mockRejectedValue(new Error('boom'))
+        const wrapper = await openModal()
+
+        await wrapper.get('[data-testid="target-order-margin-input"]').setValue('30')
+        await wrapper.get('[data-testid="order-ficha-save-button"]').trigger('click')
+        await flushPromises()
+
+        expect(wrapper.get('[data-testid="order-ficha-error"]').text()).toContain(
+          'Não foi possível salvar a margem ideal',
+        )
+        expect(orderFichaReplaceMock).not.toHaveBeenCalled()
+      })
+
+      it('a margem recém-salva passa a valer na comparação da listagem', async () => {
+        orderStoreMock.items = [
+          {
+            id: 'o1',
+            dateTime: '2026-05-14T10:00:00',
+            customerId: 'c1',
+            customerName: 'João',
+            status: 'PAID',
+            totalValue: 30,
+            estimatedProfit: 13,
+            marginPct: 20,
+            items: [],
+          },
+        ]
+        mockedUserService.updatePreferences.mockImplementation(async (prefs) => prefs)
+        const wrapper = await openModal()
+
+        await wrapper.get('[data-testid="target-order-margin-input"]').setValue('30')
+        await wrapper.get('[data-testid="order-ficha-save-button"]').trigger('click')
+        await flushPromises()
+
+        // 20% contra meta de 30% → vermelho, sem precisar recarregar a tela
+        const n = parseInt(UI.rose.slice(1), 16)
+        expect(wrapper.get('[data-testid="order-o1-margin"]').attributes('style')).toContain(
+          `color: rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`,
+        )
       })
     })
 
