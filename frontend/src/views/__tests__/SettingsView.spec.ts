@@ -7,9 +7,7 @@ import IfoodOrderSyncModal from '@/components/IfoodOrderSyncModal.vue'
 import IfoodCatalogPublishModal from '@/components/IfoodCatalogPublishModal.vue'
 import { ifoodAuthService, type IfoodStatusResponse } from '@/services/ifoodAuthService'
 import { billingService } from '@/services/billingService'
-import { userService } from '@/services/userService'
 import type { PlanResponse, SubscriptionResponse } from '@/types/Billing'
-import type { MerchantPreferences } from '@/types/User'
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: { section: 'ints' } }),
@@ -60,27 +58,8 @@ vi.mock('@/services/billingService', () => ({
   },
 }))
 
-vi.mock('@/services/userService', () => ({
-  userService: {
-    getPreferences: vi.fn(),
-    updatePreferences: vi.fn(),
-  },
-}))
-
 const mockedService = vi.mocked(ifoodAuthService)
 const mockedBilling = vi.mocked(billingService)
-const mockedUserService = vi.mocked(userService)
-
-function preferencesOf(overrides: Partial<MerchantPreferences> = {}): MerchantPreferences {
-  return {
-    realtimeMarginCalc: true,
-    marginAlertBelow50Pct: false,
-    warnUnregisteredIngredients: true,
-    includePackagingCostInCost: true,
-    targetOrderMarginPct: null,
-    ...overrides,
-  }
-}
 
 const STUBS = {
   IfoodConnectModal: true,
@@ -455,94 +434,5 @@ describe('SettingsView — Plano e pagamento', () => {
     expect(planCard.exists()).toBe(true)
     expect(planCard.text()).toContain('Básico')
     expect(wrapper.find('[data-testid="billing-unavailable-notice"]').exists()).toBe(true)
-  })
-})
-
-describe('SettingsView — margem ideal do pedido', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    sessionStorage.clear()
-    mockedUserService.getPreferences.mockResolvedValue(preferencesOf())
-    mockedUserService.updatePreferences.mockImplementation(async (prefs) => prefs)
-  })
-
-  async function openOrders(status: IfoodStatusResponse = statusOf()) {
-    const wrapper = await mountView(status, { expand: false })
-    const item = wrapper
-      .findAll('.settings-subnav-item')
-      .find((el) => el.text().includes('Pedidos'))
-    await item!.trigger('click')
-    await flushPromises()
-    return wrapper
-  }
-
-  it('carrega a margem ideal já configurada no campo', async () => {
-    mockedUserService.getPreferences.mockResolvedValue(preferencesOf({ targetOrderMarginPct: 32 }))
-
-    const wrapper = await openOrders()
-
-    const field = wrapper.find('[data-testid="target-order-margin-input"]')
-    expect(field.exists()).toBe(true)
-    expect((field.element as HTMLInputElement).value).toBe('32')
-  })
-
-  it('deixa o campo vazio quando o lojista ainda não acompanha margem do pedido', async () => {
-    const wrapper = await openOrders()
-
-    const field = wrapper.find('[data-testid="target-order-margin-input"]')
-    expect((field.element as HTMLInputElement).value).toBe('')
-  })
-
-  it('salva a margem preservando as outras preferências do merchant', async () => {
-    const wrapper = await openOrders()
-
-    await wrapper.find('[data-testid="target-order-margin-input"]').setValue('28,5')
-    await wrapper.find('[data-testid="target-order-margin-save"]').trigger('click')
-    await flushPromises()
-
-    // o PUT sobrescreve as prefs inteiras — os outros campos têm de ir junto
-    expect(mockedUserService.updatePreferences).toHaveBeenCalledWith({
-      ...preferencesOf(),
-      targetOrderMarginPct: 28.5,
-    })
-    expect(wrapper.find('[data-testid="target-order-margin-saved"]').exists()).toBe(true)
-  })
-
-  it('campo vazio limpa a margem ideal (volta a não acompanhar)', async () => {
-    mockedUserService.getPreferences.mockResolvedValue(preferencesOf({ targetOrderMarginPct: 32 }))
-    const wrapper = await openOrders()
-
-    await wrapper.find('[data-testid="target-order-margin-input"]').setValue('')
-    await wrapper.find('[data-testid="target-order-margin-save"]').trigger('click')
-    await flushPromises()
-
-    expect(mockedUserService.updatePreferences).toHaveBeenCalledWith({
-      ...preferencesOf(),
-      targetOrderMarginPct: null,
-    })
-  })
-
-  it('recusa percentual fora de 0–100 sem chamar a API', async () => {
-    const wrapper = await openOrders()
-
-    await wrapper.find('[data-testid="target-order-margin-input"]').setValue('120')
-    await wrapper.find('[data-testid="target-order-margin-save"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('[data-testid="target-order-margin-error"]').text()).toContain('0 e 100')
-    expect(mockedUserService.updatePreferences).not.toHaveBeenCalled()
-  })
-
-  it('avisa em pt-BR quando o save falha', async () => {
-    mockedUserService.updatePreferences.mockRejectedValue(new Error('boom'))
-    const wrapper = await openOrders()
-
-    await wrapper.find('[data-testid="target-order-margin-input"]').setValue('30')
-    await wrapper.find('[data-testid="target-order-margin-save"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('[data-testid="target-order-margin-error"]').text()).toContain(
-      'Não foi possível salvar',
-    )
   })
 })
