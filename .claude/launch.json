@@ -11,7 +11,7 @@
       "name": "frontend",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "cwd": "/Users/saulo/Projetos/MenuBank/frontend",
+      "cwd": "/Users/saulo/Projetos/jetmenu/frontend",
       "port": 5173,
       "autoPort": false
     }

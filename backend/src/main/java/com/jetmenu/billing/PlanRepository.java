@@ -13,4 +13,9 @@ public interface PlanRepository extends JpaRepository<Plan, UUID> {
     boolean existsByName(String name);
 
     Optional<Plan> findByName(String name);
+
+    /** Plans created before {@code plans.slug} existed; backfilled once at startup. */
+    List<Plan> findBySlugIsNull();
+
+    Optional<Plan> findBySlug(String slug);
 }

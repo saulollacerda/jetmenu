@@ -139,8 +139,8 @@ class SubscriptionControllerTest {
         }
 
         @Test
-        @DisplayName("deve retornar 503 em pt-BR enquanto não há provedor de pagamento integrado")
-        void shouldReturn503WhenNoBillingProviderIsIntegrated() throws Exception {
+        @DisplayName("deve retornar 503 em pt-BR quando o provedor de pagamento está indisponível")
+        void shouldReturn503WhenBillingProviderIsUnavailable() throws Exception {
             UUID planId = UUID.randomUUID();
             given(billingProvider.createCheckout(any(), eq(planId)))
                     .willThrow(new BillingProviderUnavailableException());
@@ -152,8 +152,8 @@ class SubscriptionControllerTest {
                     .andExpect(status().isServiceUnavailable())
                     .andExpect(jsonPath("$.title").value("Pagamento indisponível"))
                     .andExpect(jsonPath("$.detail").value(
-                            "O pagamento online está temporariamente indisponível enquanto integramos um novo "
-                                    + "provedor. Entre em contato com o suporte para ativar seu plano."));
+                            "O pagamento online está temporariamente indisponível. Tente novamente em alguns "
+                                    + "instantes ou entre em contato com o suporte para ativar seu plano."));
         }
     }
 

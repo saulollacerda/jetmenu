@@ -4,6 +4,7 @@ import com.jetmenu.category.CategoryNotFoundException;
 import com.jetmenu.category.DuplicateCategoryException;
 import com.jetmenu.customer.CustomerNotFoundException;
 import com.jetmenu.integration.anotaai.AnotaAIIntegrationException;
+import com.jetmenu.integration.stripe.StripeWebhookSignatureException;
 import com.jetmenu.ingredient.DuplicateIngredientException;
 import com.jetmenu.ingredient.IngredientNotFoundException;
 import com.jetmenu.notification.NotificationNotFoundException;
@@ -170,8 +171,10 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
     }
 
-    // 503 rather than 5xx-generic: the checkout endpoint is intact, there is simply no
-    // payment provider wired in yet. The message is already pt-BR and merchant-facing.
+    // 503 rather than 5xx-generic: the checkout endpoint is intact, the payment provider is
+    // simply unconfigured or unreachable. The message is already pt-BR and merchant-facing.
+    // On the Stripe webhook a 503 also tells Stripe to retry later, which is what we want
+    // for a misconfiguration.
     @ExceptionHandler(BillingProviderUnavailableException.class)
     public ResponseEntity<ProblemDetail> handleBillingProviderUnavailable(
             BillingProviderUnavailableException ex) {
@@ -179,6 +182,17 @@ public class GlobalExceptionHandler {
                 HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
         problem.setTitle("Pagamento indisponível");
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(problem);
+    }
+
+    // A callback on /api/webhooks/stripe whose Stripe-Signature header is missing or does not
+    // verify is not a Stripe retry candidate — it is a forgery or a misconfigured secret.
+    // 400 makes Stripe give up instead of hammering the endpoint.
+    @ExceptionHandler(StripeWebhookSignatureException.class)
+    public ResponseEntity<ProblemDetail> handleStripeWebhookSignature(
+            StripeWebhookSignatureException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        problem.setTitle("Assinatura inválida");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(problem);
     }
 
     @ExceptionHandler(AnotaAIIntegrationException.class)

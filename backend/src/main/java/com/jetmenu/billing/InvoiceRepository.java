@@ -13,12 +13,15 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
     List<Invoice> findBySubscriptionId(UUID subscriptionId);
 
     /**
-     * Idempotency lookup for {@link SubscriptionActivationService}. Backed by the legacy
-     * {@code abacatepay_billing_id} column because it is the only external-reference column
-     * the schema has; the next payment provider must add its own column and repoint this
-     * query. See {@link Invoice#getExternalPaymentReference()}.
+     * Idempotency lookup for {@link SubscriptionActivationService}, backed by the
+     * provider-agnostic {@code invoices.payment_reference} column (migration V31). The legacy
+     * {@code abacatepay_billing_id} column is deliberately not consulted: V31 copied its
+     * values across, so historical AbacatePay payments are matched through
+     * {@code payment_reference} like everything else.
+     *
+     * @see Invoice#getExternalPaymentReference()
      */
-    @Query("SELECT i FROM Invoice i WHERE i.abacatepayBillingId = :reference")
+    @Query("SELECT i FROM Invoice i WHERE i.paymentReference = :reference")
     Optional<Invoice> findByExternalPaymentReference(@Param("reference") String reference);
 
     List<Invoice> findBySubscriptionIdAndStatus(UUID subscriptionId, InvoiceStatus status);

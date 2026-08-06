@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
+import { peekPendingPlan } from '@/lib/pendingPlan'
 import type { LoginRequest } from '@/types/Auth'
 import { UI, UIField, UIInput, UIIcon } from '@/design'
 
+const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 
@@ -14,6 +16,19 @@ const showPassword = ref(false)
 async function handleSubmit() {
   try {
     await authStore.login(form.value)
+    // A plan in the query means the visitor came from the landing page pricing CTA
+    // and only logged in to get an account: resume the checkout they asked for.
+    const plan = route.query.plan
+    if (typeof plan === 'string' && plan) {
+      router.push({ path: '/checkout', query: { plan } })
+      return
+    }
+    // Same intent, but the plan was chosen before a sign-up that required email
+    // confirmation, so it survives only in storage. CheckoutView consumes it.
+    if (peekPendingPlan()) {
+      router.push('/checkout')
+      return
+    }
     router.push('/dashboard')
   } catch {
     // error is handled in the store

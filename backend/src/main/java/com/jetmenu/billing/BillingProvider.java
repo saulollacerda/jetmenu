@@ -10,17 +10,20 @@ import java.util.UUID;
  * ({@link SubscriptionActivationService}); a provider only has to turn a
  * (merchant, plan) pair into a hosted checkout the merchant can pay.
  * <p>
- * To integrate a new provider:
+ * The current implementation is {@code com.jetmenu.integration.stripe.StripeBillingProvider}
+ * (hosted Stripe Checkout Sessions in subscription mode). It is the only unqualified bean
+ * implementing this interface — a second one would fail context startup.
+ * <p>
+ * To swap the provider:
  * <ol>
- *   <li>Implement this interface in {@code integration/<provider>/} and expose it as a
- *       {@code @Service} annotated {@code @Primary} (or delete
- *       {@link UnavailableBillingProvider}, which is the current default bean).</li>
+ *   <li>Implement this interface in {@code integration/<provider>/} and keep exactly one
+ *       unqualified bean (replace the current one, or mark the new one {@code @Primary}).</li>
  *   <li>Add a webhook controller for the provider's "payment confirmed" event and call
  *       {@link SubscriptionActivationService#activatePaidSubscription} with JetMenu's
  *       own identifiers. The provider is responsible for carrying the merchant and plan
  *       ids through checkout (metadata / external id) and decoding them back.</li>
- *   <li>Permit the new webhook path in {@code SecurityConfig} — the previous provider's
- *       entry was removed with it.</li>
+ *   <li>Permit the new webhook path in {@code SecurityConfig}, next to
+ *       {@code /api/webhooks/stripe}.</li>
  * </ol>
  *
  * @see SubscriptionActivationService
