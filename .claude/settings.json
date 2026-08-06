@@ -3,7 +3,7 @@
     "allow": [
       "Bash(npm test *)",
       "Bash(npm run *)",
-      "Bash(/Users/saulo/Projetos/MenuBank/backend/mvnw*)"
+      "Bash(/Users/saulo/Projetos/jetmenu/backend/mvnw*)"
     ],
     "deny": [
       "Bash(rm -rf *)"
