@@ -23,3 +23,23 @@ describe('router — a landing page saiu do app', () => {
     expect(root?.redirect).toBe('/dashboard')
   })
 })
+
+/**
+ * Pricing now lives only on the landing page. Its CTA sends the visitor to
+ * /checkout?plan=<slug>, which is the app's only entry point into payment.
+ */
+describe('router — planos saíram do app, checkout entrou', () => {
+  it('não tem mais rota /planos', () => {
+    expect(router.resolve('/planos').matched).toHaveLength(0)
+    expect(router.getRoutes().map((route) => route.name)).not.toContain('plans')
+  })
+
+  it('expõe /checkout como rota pública acessível também para autenticados', () => {
+    const checkout = router.resolve('/checkout?plan=basico')
+
+    expect(checkout.name).toBe('checkout')
+    expect(checkout.matched).toHaveLength(1)
+    expect(checkout.meta).toMatchObject({ public: true, allowAuthenticated: true })
+    expect(checkout.query.plan).toBe('basico')
+  })
+})

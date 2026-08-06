@@ -65,7 +65,7 @@ describe('authGuard', () => {
     authState.sessionAfterInit = true
 
     const result = await authGuard(
-      route({ name: 'plans', meta: { public: true, allowAuthenticated: true } }),
+      route({ name: 'checkout', meta: { public: true, allowAuthenticated: true } }),
     )
 
     expect(result).toBeUndefined()

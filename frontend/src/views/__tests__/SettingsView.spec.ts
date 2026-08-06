@@ -333,9 +333,25 @@ describe('SettingsView — checklist Anota.AI', () => {
 })
 
 describe('SettingsView — Plano e pagamento', () => {
+  let originalLocation: Location
+
   beforeEach(() => {
     vi.clearAllMocks()
     sessionStorage.clear()
+    originalLocation = window.location
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: { href: '' },
+    })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: originalLocation,
+    })
   })
 
   const basicPlan: PlanResponse = {
@@ -408,16 +424,31 @@ describe('SettingsView — Plano e pagamento', () => {
     expect(status.text()).toContain('Básico')
   })
 
-  it('avisa em pt-BR que o pagamento está indisponível e não oferece botão de assinar', async () => {
+  it('assinar um plano cria o checkout e redireciona para a URL retornada', async () => {
     const wrapper = await openBilling(subscriptionOf(), [basicPlan])
 
-    const notice = wrapper.find('[data-testid="billing-unavailable-notice"]')
-    expect(notice.exists()).toBe(true)
-    expect(notice.text()).toContain('indisponível')
-    expect(notice.text()).toContain('contato')
-    // No dead button: nothing may look clickable while there is no provider.
-    expect(wrapper.find('[data-testid="billing-subscribe-action"]').exists()).toBe(false)
-    expect(mockedBilling.createCheckout).not.toHaveBeenCalled()
+    // No stale notice: this is the renew/upgrade path for an existing merchant.
+    expect(wrapper.find('[data-testid="billing-unavailable-notice"]').exists()).toBe(false)
+
+    mockedBilling.createCheckout.mockResolvedValue({ url: 'https://checkout.stripe.com/s/abc' })
+    await wrapper.find('[data-testid="billing-subscribe-action"]').trigger('click')
+    await flushPromises()
+
+    expect(mockedBilling.createCheckout).toHaveBeenCalledWith('plan-1')
+    expect(window.location.href).toBe('https://checkout.stripe.com/s/abc')
+  })
+
+  it('falha no checkout mostra erro em pt-BR sem redirecionar', async () => {
+    const wrapper = await openBilling(subscriptionOf(), [basicPlan])
+
+    mockedBilling.createCheckout.mockRejectedValue({ response: { status: 503 } })
+    await wrapper.find('[data-testid="billing-subscribe-action"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="billing-error"]').text()).toContain(
+      'pagamento online está temporariamente indisponível',
+    )
+    expect(window.location.href).toBe('')
   })
 
   it('mostra os planos mesmo quando o merchant ainda não tem assinatura registrada', async () => {
@@ -433,6 +464,6 @@ describe('SettingsView — Plano e pagamento', () => {
     const planCard = wrapper.find('[data-testid="billing-plan-card"]')
     expect(planCard.exists()).toBe(true)
     expect(planCard.text()).toContain('Básico')
-    expect(wrapper.find('[data-testid="billing-unavailable-notice"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="billing-subscribe-action"]').exists()).toBe(true)
   })
 })

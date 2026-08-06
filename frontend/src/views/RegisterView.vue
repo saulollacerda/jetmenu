@@ -1,12 +1,32 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
+import { savePendingPlan, peekPendingPlan } from '@/lib/pendingPlan'
 import type { UserRequest } from '@/types/User'
 import { UI, UIField, UIInput, UIIcon } from '@/design'
 
+const route = useRoute()
+const router = useRouter()
 const authStore = useAuthStore()
 
+// Set when the visitor arrived from the landing page pricing CTA. It has to survive
+// the whole sign-up so checkout can resume once the account exists.
+const planSlug = computed(() => {
+  const plan = route.query.plan
+  return typeof plan === 'string' && plan ? plan : null
+})
+const loginLink = computed(() =>
+  planSlug.value ? { path: '/login', query: { plan: planSlug.value } } : { path: '/login' },
+)
+
 const validationError = ref<string | null>(null)
+
+// A visitor can arrive straight from the landing page CTA. Persist the plan so it survives
+// email confirmation, whose return link carries no query string and usually opens a new tab.
+onMounted(() => {
+  if (planSlug.value) savePendingPlan(planSlug.value)
+})
 const accepted = ref(false)
 
 const form = ref<UserRequest>({
@@ -56,8 +76,21 @@ async function handleSubmit() {
   }
   try {
     await authStore.register(form.value)
-    // Email confirmation is required: stay here and show the confirmation notice
-    // (authStore.awaitingEmailConfirmation becomes true).
+    if (authStore.awaitingEmailConfirmation) {
+      // No session yet: stay here and show the confirmation notice. The chosen plan is
+      // persisted, so checkout resumes once the merchant confirms.
+      return
+    }
+    // Confirmation is off (local dev provider): the account already has a session, so this
+    // view must navigate. Staying put would leave the merchant logged in on the sign-up
+    // form, which reads as a broken button.
+    if (planSlug.value) {
+      router.push({ path: '/checkout', query: { plan: planSlug.value } })
+    } else if (peekPendingPlan()) {
+      router.push('/checkout')
+    } else {
+      router.push('/dashboard')
+    }
   } catch {
     // store has error
   }
@@ -245,7 +278,7 @@ async function handleSubmit() {
         >
           <strong>Quase lá!</strong> Enviamos um email de confirmação para
           <strong>{{ form.email }}</strong>. Confirme seu email e depois
-          <RouterLink to="/login" :style="{ color: UI.blue, fontWeight: 600 }">faça login</RouterLink>
+          <RouterLink :to="loginLink" :style="{ color: UI.blue, fontWeight: 600 }">faça login</RouterLink>
           para concluir o cadastro.
         </div>
 
@@ -362,7 +395,7 @@ async function handleSubmit() {
         >
           Já tem uma conta?
           <RouterLink
-            to="/login"
+            :to="loginLink"
             :style="{ color: UI.blue, fontWeight: 600, textDecoration: 'none' }"
           >
             Faça login

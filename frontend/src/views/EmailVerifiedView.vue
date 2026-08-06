@@ -1,10 +1,27 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useAuthStore } from '@/stores/authStore'
+import { peekPendingPlan } from '@/lib/pendingPlan'
 import { UI, UIIcon } from '@/design'
 
 // The confirmation link signs the user in (detectSessionInUrl); the CTA must not
 // send an already-authenticated user to a login page they would bounce off of.
 const authStore = useAuthStore()
+
+// This page is the confirmation link's fixed landing and carries no query string, so a
+// plan chosen on the landing page can only come from storage. Read without consuming —
+// CheckoutView consumes it.
+const pendingPlan = peekPendingPlan()
+
+const ctaTarget = computed(() => {
+  if (!authStore.isAuthenticated) return '/login'
+  return pendingPlan ? '/checkout' : '/dashboard'
+})
+
+const ctaLabel = computed(() => {
+  if (!authStore.isAuthenticated) return 'Ir para o login'
+  return pendingPlan ? 'Continuar para o pagamento' : 'Ir para o painel'
+})
 </script>
 
 <template>
@@ -107,7 +124,7 @@ const authStore = useAuthStore()
       </p>
 
       <RouterLink
-        :to="authStore.isAuthenticated ? '/dashboard' : '/login'"
+        :to="ctaTarget"
         class="ui-btn"
         :style="{
           marginTop: '28px',
@@ -126,7 +143,7 @@ const authStore = useAuthStore()
           cursor: 'pointer',
         }"
       >
-        {{ authStore.isAuthenticated ? 'Ir para o painel' : 'Ir para o login' }}
+        {{ ctaLabel }}
         <UIIcon name="arrow" :size="15" />
       </RouterLink>
     </div>

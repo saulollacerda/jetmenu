@@ -204,6 +204,7 @@ const billingSubscription = ref<SubscriptionResponse | null>(null)
 const billingLoading = ref(false)
 const billingLoaded = ref(false)
 const billingError = ref<string | null>(null)
+const subscribingPlanId = ref<string | null>(null)
 
 const BILLING_STATUS_LABELS: Record<SubscriptionResponse['status'], string> = {
   PENDING: 'Aguardando pagamento',
@@ -270,10 +271,25 @@ async function loadBilling() {
   }
 }
 
-// NOTE: online checkout is intentionally absent. The previous payment provider was
-// removed and the next one is not integrated yet, so the screen shows an explicit
-// notice instead of a button that cannot work. To restore it, call
-// billingService.createCheckout(plan.id) and redirect to the returned URL.
+// In-app renew/upgrade path: the only way a merchant whose subscription lapsed can
+// pay, since pricing itself lives on the landing page now.
+async function subscribeToPlan(plan: PlanResponse) {
+  subscribingPlanId.value = plan.id
+  billingError.value = null
+  try {
+    const { url } = await billingService.createCheckout(plan.id)
+    // Full-page handover: the provider brings the merchant back on its own URLs.
+    window.location.href = url
+  } catch (e: unknown) {
+    const status = (e as { response?: { status?: number } })?.response?.status
+    billingError.value =
+      status === 503
+        ? 'O pagamento online está temporariamente indisponível. Tente novamente em alguns minutos ou fale com o suporte.'
+        : 'Não foi possível iniciar o pagamento. Tente novamente.'
+  } finally {
+    subscribingPlanId.value = null
+  }
+}
 
 watch(section, (current) => {
   if (current === 'billing' && !billingLoaded.value && !billingLoading.value) {
@@ -1282,24 +1298,6 @@ onMounted(async () => {
           </div>
 
           <div
-            data-testid="billing-unavailable-notice"
-            :style="{
-              padding: '12px 14px',
-              background: UI.amberBg,
-              color: UI.amber2,
-              border: `1px solid ${UI.border}`,
-              borderRadius: '10px',
-              fontSize: '12.5px',
-              lineHeight: 1.5,
-              marginBottom: '16px',
-            }"
-          >
-            O pagamento online está <strong>temporariamente indisponível</strong> enquanto
-            integramos um novo provedor. Entre em contato com o suporte para ativar ou renovar
-            seu plano — sua assinatura atual continua valendo normalmente.
-          </div>
-
-          <div
             v-if="billingError"
             data-testid="billing-error"
             :style="{
@@ -1366,6 +1364,14 @@ onMounted(async () => {
                     {{ formatBRL(plan.priceMonthly) }}
                     <span :style="{ fontSize: '12px', color: UI.textSub, fontWeight: 500 }">/mês</span>
                   </div>
+                  <UIBtn
+                    variant="primary"
+                    data-testid="billing-subscribe-action"
+                    :disabled="subscribingPlanId === plan.id"
+                    @click="subscribeToPlan(plan)"
+                  >
+                    {{ subscribingPlanId === plan.id ? 'Gerando pagamento…' : 'Assinar' }}
+                  </UIBtn>
                 </div>
               </div>
             </div>
