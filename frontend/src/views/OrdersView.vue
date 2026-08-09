@@ -643,6 +643,16 @@ async function viewDetail(o: OrderResponse) {
 // fechamos e recarregamos a lista quando uma ação muda o status do pedido.
 const ticketOrder = ref<OrderResponse | null>(null)
 
+/**
+ * A comanda só existe para pedidos que vieram da integração direta com o iFood — é ela
+ * que preenche o `displayId`. Pedidos do canal iFood importados pela Anota.AI (prévia
+ * temporária) também têm origin=IFOOD, mas não existem na API do iFood: abrir a comanda
+ * neles ofereceria ações de confirmar/despachar/cancelar que fatalmente falhariam.
+ */
+function hasIfoodTicket(o: OrderResponse): boolean {
+  return o.origin === 'IFOOD' && !!o.displayId
+}
+
 function openTicket(o: OrderResponse) {
   ticketOrder.value = o
 }
@@ -1027,7 +1037,7 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
             </span>
             <span style="display: flex; gap: 5px; justify-content: flex-end">
               <UIRowAction
-                v-if="o.origin === 'IFOOD'"
+                v-if="hasIfoodTicket(o)"
                 icon="receipt"
                 color="emerald"
                 label="Comanda"

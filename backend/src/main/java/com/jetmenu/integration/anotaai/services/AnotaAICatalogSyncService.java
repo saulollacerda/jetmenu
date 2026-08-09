@@ -3,6 +3,7 @@ package com.jetmenu.integration.anotaai.services;
 import com.jetmenu.category.CatalogOrigin;
 import com.jetmenu.category.Category;
 import com.jetmenu.category.CategoryRepository;
+import com.jetmenu.ingredient.IngredientNameNormalizer;
 import com.jetmenu.integration.anotaai.AnotaAICatalogResponse;
 import com.jetmenu.integration.anotaai.AnotaAIClient;
 import com.jetmenu.integration.anotaai.AnotaAISyncResult;
@@ -100,6 +101,9 @@ public class AnotaAICatalogSyncService {
                         includeRepository.deleteAllByProductIdAndProductMerchantId(product.getId(), merchantId);
                     }
                     product.setName(remoteItem.getTitle());
+                    // Recalculado junto com o nome: é a chave usada para casar itens de pedido
+                    // que chegam sem internalId (canal iFood via Anota.AI).
+                    product.setCanonicalName(IngredientNameNormalizer.normalize(remoteItem.getTitle()));
                     product.setPrice(price);
                     product.setStatus(status);
                     product.setCategory(category);
@@ -109,6 +113,7 @@ public class AnotaAICatalogSyncService {
                     Product product = Product.builder()
                             .merchant(merchantRepository.getReferenceById(merchantId))
                             .name(remoteItem.getTitle())
+                            .canonicalName(IngredientNameNormalizer.normalize(remoteItem.getTitle()))
                             .price(price)
                             .status(status)
                             .externalId(remoteItem.getId())

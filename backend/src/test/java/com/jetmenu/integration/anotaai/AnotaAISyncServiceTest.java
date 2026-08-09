@@ -29,7 +29,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -66,14 +65,26 @@ class AnotaAISyncServiceTest {
     @Mock private ExternalOrderRawPayloadService rawPayloadService;
     @Mock private com.jetmenu.order.OrderFichaService orderFichaService;
 
-    @InjectMocks
     private AnotaAISyncService syncService;
 
     private UUID merchantId;
     private Merchant merchant;
 
+    /**
+     * Constrói o serviço com a flag temporária de prévia do iFood ligada ou desligada.
+     * O padrão dos testes é desligada — o mesmo padrão de produção.
+     */
+    private AnotaAISyncService buildSyncService(boolean ifoodPreviewEnabled) {
+        return new AnotaAISyncService(anotaAIClient, merchantRepository, categoryRepository,
+                productRepository, customerRepository, feeRepository, orderRepository,
+                ingredientRepository, includeRepository, notificationService,
+                orderCostCalculatorService, rawPayloadService, orderFichaService,
+                ifoodPreviewEnabled);
+    }
+
     @BeforeEach
     void setUp() {
+        syncService = buildSyncService(false);
         merchantId = UUID.randomUUID();
         merchant = Merchant.builder()
                 .id(merchantId)
@@ -131,6 +142,36 @@ class AnotaAISyncServiceTest {
 
         verify(categoryRepository).save(argThat(c -> c.getOrigin() == CatalogOrigin.ANOTA_AI));
         verify(productRepository, times(2)).save(argThat(p -> p.getOrigin() == CatalogOrigin.ANOTA_AI));
+    }
+
+    @Test
+    @DisplayName("syncCatalog deve gravar o canonicalName dos produtos — é a chave de match por nome")
+    void syncCatalog_shouldStampCanonicalNameOnProducts() {
+        // Sem canonicalName, produtos vindos do catálogo da Anota.AI ficam invisíveis para a
+        // resolução por nome — que é a única disponível para os pedidos do canal iFood.
+        Product existingProduct = Product.builder()
+                .id(UUID.randomUUID()).merchant(Merchant.builder().id(merchantId).build())
+                .name("Old Product").price(new BigDecimal("5.00"))
+                .status(ProductStatus.ACTIVE).externalId("item-1").build();
+
+        given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
+        given(anotaAIClient.getCatalog("test-api-key")).willReturn(buildCatalog());
+        given(categoryRepository.findByExternalIdAndMerchantId(anyString(), eq(merchantId)))
+                .willReturn(Optional.empty());
+        given(productRepository.findByExternalIdAndMerchantId("item-1", merchantId))
+                .willReturn(Optional.of(existingProduct));
+        given(productRepository.findByExternalIdAndMerchantId("item-2", merchantId))
+                .willReturn(Optional.empty());
+        given(categoryRepository.save(any(Category.class)))
+                .willAnswer(inv -> { Category c = inv.getArgument(0); c.setId(UUID.randomUUID()); return c; });
+
+        syncService.syncCatalog(merchantId);
+
+        // Produto novo nasce com o canônico do título
+        verify(productRepository).save(argThat(p ->
+                "Suco 500ml".equals(p.getName()) && "suco 500ml".equals(p.getCanonicalName())));
+        // Produto existente tem o canônico recalculado ao ser renomeado
+        assertThat(existingProduct.getCanonicalName()).isEqualTo("refrigerante 1l");
     }
 
     @Test
@@ -323,13 +364,176 @@ class AnotaAISyncServiceTest {
     }
 
     @Test
-    @DisplayName("syncOrders deve ignorar pedidos com salesChannel=ifood — apenas Anota.AI é importado")
+    @DisplayName("syncOrders deve ignorar pedidos com salesChannel=ifood quando a flag de prévia está desligada")
     void syncOrders_shouldSkipIfoodOrders() {
         given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
         given(anotaAIClient.getOrderList("test-api-key"))
                 .willReturn(buildOrderListWithSalesChannel("order-ifood", "ifood"));
 
         AnotaAISyncResult result = syncService.syncOrders(merchantId);
+
+        assertThat(result.getOrdersImported()).isZero();
+        assertThat(result.getOrdersSkipped()).isEqualTo(1);
+        verify(anotaAIClient, never()).getOrderDetail(anyString(), anyString());
+        verify(orderRepository, never()).save(any());
+    }
+
+    // -------------------------------------------------------------------------
+    // syncOrders — prévia temporária dos pedidos do iFood vindos pela Anota.AI
+    // (feature flag anotaai.import-ifood-orders-enabled)
+    // -------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("syncOrders com a flag ligada deve importar pedidos salesChannel=ifood com origin=IFOOD")
+    void syncOrders_withIfoodPreviewEnabled_shouldImportIfoodOrdersAsIfoodOrigin() {
+        AnotaAISyncService service = buildSyncService(true);
+        Product acai330 = Product.builder()
+                .id(UUID.randomUUID()).merchant(Merchant.builder().id(merchantId).build())
+                .name("Açaí 330 ml").status(ProductStatus.ACTIVE).build();
+
+        given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
+        given(anotaAIClient.getOrderList("test-api-key"))
+                .willReturn(buildOrderListWithSalesChannel("order-ifood", "ifood"));
+        given(orderRepository.existsByExternalOrderIdAndMerchantId("order-ifood", merchantId))
+                .willReturn(false);
+        given(anotaAIClient.getOrderDetail("test-api-key", "order-ifood"))
+                .willReturn(raw(buildIfoodOrderDetail("order-ifood")));
+        given(customerRepository.findByPhoneAndMerchantId("43123456789", merchantId))
+                .willReturn(Optional.of(Customer.builder().id(UUID.randomUUID())
+                        .merchant(Merchant.builder().id(merchantId).build()).build()));
+        given(feeRepository.findByNameIgnoreCaseAndMerchantId("pix-ifood", merchantId))
+                .willReturn(Optional.empty());
+        // Itens do iFood chegam com internalId="" — a resolução tem de acontecer pelo nome.
+        given(productRepository.findByCanonicalNameAndMerchantId("acai 330 ml", merchantId))
+                .willReturn(Optional.of(acai330));
+
+        AnotaAISyncResult result = service.syncOrders(merchantId);
+
+        assertThat(result.getOrdersImported()).isEqualTo(1);
+        assertThat(result.getOrdersSkipped()).isZero();
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        Order saved = orderCaptor.getValue();
+        assertThat(saved.getOrigin()).isEqualTo(OrderOrigin.IFOOD);
+        assertThat(saved.getExternalOrderId()).isEqualTo("order-ifood");
+        assertThat(saved.getItems()).hasSize(1);
+        // total do iFood já é líquido de descontos e inclui entrega e taxa de serviço
+        assertThat(saved.getTotalValue()).isEqualByComparingTo("14.48");
+        assertThat(saved.getDeliveryFee()).isEqualByComparingTo("4.00");
+        assertThat(saved.getServiceFee()).isEqualByComparingTo("0.99");
+        // estimatedProfit = 14.48 − 4.00 − 0.99 − 0 = 9.49
+        assertThat(saved.getEstimatedProfit()).isEqualByComparingTo("9.49");
+    }
+
+    @Test
+    @DisplayName("syncOrders com a flag ligada deve resolver os extras do iFood por nome canônico")
+    void syncOrders_withIfoodPreviewEnabled_shouldResolveExtrasByCanonicalName() {
+        AnotaAISyncService service = buildSyncService(true);
+        Product acai330 = Product.builder()
+                .id(UUID.randomUUID()).merchant(Merchant.builder().id(merchantId).build())
+                .name("Açaí 330 ml").status(ProductStatus.ACTIVE).build();
+        Ingredient leiteNinho = Ingredient.builder()
+                .id(UUID.randomUUID()).merchant(Merchant.builder().id(merchantId).build())
+                .name("Leite Ninho").unit("g")
+                .costPerUnit(new BigDecimal("0.0533")).defaultQuantity(new BigDecimal("20"))
+                .status(IngredientStatus.ACTIVE).build();
+
+        given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
+        given(anotaAIClient.getOrderList("test-api-key"))
+                .willReturn(buildOrderListWithSalesChannel("order-ifood", "ifood"));
+        given(orderRepository.existsByExternalOrderIdAndMerchantId("order-ifood", merchantId))
+                .willReturn(false);
+        given(anotaAIClient.getOrderDetail("test-api-key", "order-ifood"))
+                .willReturn(raw(buildIfoodOrderDetail("order-ifood")));
+        given(customerRepository.findByPhoneAndMerchantId("43123456789", merchantId))
+                .willReturn(Optional.of(Customer.builder().id(UUID.randomUUID())
+                        .merchant(Merchant.builder().id(merchantId).build()).build()));
+        given(feeRepository.findByNameIgnoreCaseAndMerchantId("pix-ifood", merchantId))
+                .willReturn(Optional.empty());
+        given(productRepository.findByCanonicalNameAndMerchantId("acai 330 ml", merchantId))
+                .willReturn(Optional.of(acai330));
+        // subItems do iFood também chegam com internalId="" — match por nome, igual à Anota.AI
+        given(ingredientRepository.findFirstByCanonicalNameAndMerchantIdOrderByIdAsc("leite ninho", merchantId))
+                .willReturn(Optional.of(leiteNinho));
+        given(ingredientRepository.findFirstByCanonicalNameAndMerchantIdOrderByIdAsc("acai zero", merchantId))
+                .willReturn(Optional.empty());
+
+        service.syncOrders(merchantId);
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        var extras = orderCaptor.getValue().getItems().get(0).getExtraIngredients();
+        assertThat(extras).hasSize(1);
+        assertThat(extras.get(0).getIngredientName()).isEqualTo("Leite Ninho");
+        // quantity = subItem.quantity (2) × ingredient.defaultQuantity (20) = 40 g
+        assertThat(extras.get(0).getQuantity()).isEqualByComparingTo("40");
+    }
+
+    @Test
+    @DisplayName("syncOrders com a flag ligada deve gravar o payload cru do iFood com origin=IFOOD")
+    void syncOrders_withIfoodPreviewEnabled_shouldSaveRawPayloadWithIfoodOrigin() {
+        AnotaAISyncService service = buildSyncService(true);
+        Product acai330 = Product.builder()
+                .id(UUID.randomUUID()).merchant(Merchant.builder().id(merchantId).build())
+                .name("Açaí 330 ml").status(ProductStatus.ACTIVE).build();
+
+        given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
+        given(anotaAIClient.getOrderList("test-api-key"))
+                .willReturn(buildOrderListWithSalesChannel("order-ifood", "ifood"));
+        given(orderRepository.existsByExternalOrderIdAndMerchantId("order-ifood", merchantId))
+                .willReturn(false);
+        given(anotaAIClient.getOrderDetail("test-api-key", "order-ifood"))
+                .willReturn(raw(buildIfoodOrderDetail("order-ifood")));
+        given(customerRepository.findByPhoneAndMerchantId("43123456789", merchantId))
+                .willReturn(Optional.of(Customer.builder().id(UUID.randomUUID())
+                        .merchant(Merchant.builder().id(merchantId).build()).build()));
+        given(productRepository.findByCanonicalNameAndMerchantId("acai 330 ml", merchantId))
+                .willReturn(Optional.of(acai330));
+
+        service.syncOrders(merchantId);
+
+        verify(rawPayloadService).save(merchantId, OrderOrigin.IFOOD, "order-ifood", RAW_JSON);
+    }
+
+    @Test
+    @DisplayName("syncOrders com a flag ligada deve manter origin=ANOTA_AI nos pedidos do canal Anota.AI")
+    void syncOrders_withIfoodPreviewEnabled_shouldKeepAnotaAiOriginForAnotaAiChannel() {
+        AnotaAISyncService service = buildSyncService(true);
+        Product mappedProduct = Product.builder()
+                .id(UUID.randomUUID()).merchant(Merchant.builder().id(merchantId).build())
+                .name("Refrigerante 1L").status(ProductStatus.ACTIVE)
+                .externalId("65d4a428f784bb001956f919").build();
+
+        given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
+        given(anotaAIClient.getOrderList("test-api-key")).willReturn(buildOrderList("order-1"));
+        given(orderRepository.existsByExternalOrderIdAndMerchantId("order-1", merchantId))
+                .willReturn(false);
+        given(anotaAIClient.getOrderDetail("test-api-key", "order-1"))
+                .willReturn(raw(buildOrderDetail("order-1")));
+        given(customerRepository.findByPhoneAndMerchantId("43123456789", merchantId))
+                .willReturn(Optional.of(Customer.builder().id(UUID.randomUUID())
+                        .merchant(Merchant.builder().id(merchantId).build()).build()));
+        given(productRepository.findByExternalIdAndMerchantId("65d4a428f784bb001956f919", merchantId))
+                .willReturn(Optional.of(mappedProduct));
+
+        service.syncOrders(merchantId);
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        assertThat(orderCaptor.getValue().getOrigin()).isEqualTo(OrderOrigin.ANOTA_AI);
+    }
+
+    @Test
+    @DisplayName("syncOrders com a flag ligada deve continuar ignorando salesChannel desconhecido")
+    void syncOrders_withIfoodPreviewEnabled_shouldStillSkipUnknownSalesChannels() {
+        AnotaAISyncService service = buildSyncService(true);
+
+        given(merchantRepository.findById(merchantId)).willReturn(Optional.of(merchant));
+        given(anotaAIClient.getOrderList("test-api-key"))
+                .willReturn(buildOrderListWithSalesChannel("order-x", "rappi"));
+
+        AnotaAISyncResult result = service.syncOrders(merchantId);
 
         assertThat(result.getOrdersImported()).isZero();
         assertThat(result.getOrdersSkipped()).isEqualTo(1);
@@ -1309,6 +1513,14 @@ class AnotaAISyncServiceTest {
         fee.setDescription("Taxa de serviço");
         fee.setValue(serviceFeeValue);
         response.getInfo().setAdditionalFees(List.of(fee));
+        return response;
+    }
+
+    /** Pedido real do canal iFood recebido via Anota.AI: internalId vazio, descontos e taxa de serviço. */
+    private AnotaAIOrderDetailResponse buildIfoodOrderDetail(String orderId) {
+        AnotaAIOrderDetailResponse response = AnotaAIFixtures.load("order_detail_ifood_channel.json",
+                AnotaAIOrderDetailResponse.class);
+        response.getInfo().setId(orderId);
         return response;
     }
 

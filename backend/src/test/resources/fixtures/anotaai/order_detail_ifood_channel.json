@@ -1,0 +1,114 @@
+{
+  "success": true,
+  "info": {
+    "_id": "order-ifood",
+    "additionalFees": [
+      {
+        "type": "RESTAURANT_SERVICE_FEE_PRIC_ROLL_2_PER_MIN_099_MAX_249",
+        "description": "Taxa de serviço",
+        "value": 0.99
+      }
+    ],
+    "check": 2,
+    "createdAt": "2026-05-20T21:31:50.786Z",
+    "customer": {
+      "id": null,
+      "name": "Saulo Pietro",
+      "phone": "43123456789",
+      "taxPayerIdentificationNumber": null,
+      "localizer": "95538054"
+    },
+    "deliveryAddress": {
+      "formattedAddress": "Q. Mocambinho St. A 47, Nº casa 9",
+      "city": "Teresina",
+      "state": "PI",
+      "postalCode": "64010030",
+      "ifood_pickup_code": "1982"
+    },
+    "deliveryFee": 4,
+    "discounts": [
+      {
+        "amount": 9,
+        "tag": "Total de descontos - iFood",
+        "target": "CART"
+      }
+    ],
+    "from": "ifood-marketplace",
+    "id": "order-ifood",
+    "ifood_id": "b9614489-436d-45c0-92b1-c28d0969f04a",
+    "ifood_order_integration": {
+      "order_v4": false
+    },
+    "items": [
+      {
+        "_id": "6a0e31bf88cc5bd54b89ae9c",
+        "id": 0,
+        "name": "Açaí 330 ml",
+        "quantity": 1,
+        "observation": "",
+        "externalId": "",
+        "backoffice_id": "",
+        "internalId": "",
+        "price": 18.49,
+        "total": 18.49,
+        "subItems": [
+          {
+            "_id": "6a0e31bf88cc5b221289ae9d",
+            "name": "Açaí Zero",
+            "quantity": 1,
+            "externalId": "",
+            "internalId": "",
+            "backoffice_id": "",
+            "price": 0,
+            "total": 0,
+            "externalCode": "extra",
+            "id": 1,
+            "id_parent": 0
+          },
+          {
+            "_id": "6a0e31bf88cc5be5e389aea0",
+            "name": "Leite Ninho",
+            "quantity": 2,
+            "externalId": "",
+            "internalId": "",
+            "backoffice_id": "",
+            "price": 0,
+            "total": 0,
+            "externalCode": "extra",
+            "id": 4,
+            "id_parent": 0
+          }
+        ]
+      }
+    ],
+    "menu_version": 2,
+    "merchant": {
+      "name": "Açaí Goat",
+      "id": "66c3ada81acfe90018b7ca85",
+      "unit": "66c3ada8810ba200193aff29"
+    },
+    "observation": "",
+    "order_automatic_accept": true,
+    "payments": [
+      {
+        "name": "pix-ifood",
+        "code": "pix-ifood",
+        "value": "14.48",
+        "cardSelected": "",
+        "externalId": "",
+        "changeFor": 0,
+        "prepaid": true
+      }
+    ],
+    "pdv": {
+      "status": false
+    },
+    "preparationStartDateTime": "2026-05-20T21:31:50.786Z",
+    "salesChannel": "ifood",
+    "shortReference": 7452,
+    "time_max": "2026-05-20T22:15:50.786Z",
+    "total": 14.48,
+    "type": "DELIVERY",
+    "updatedAt": "2026-05-20T22:12:15.444Z"
+  }
+}
