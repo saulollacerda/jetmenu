@@ -1785,6 +1785,16 @@ describe('OrdersView', () => {
       expect(wrapper.find('[data-testid="order-o1-ticket-button"]').exists()).toBe(false)
     })
 
+    it('should not offer the ticket for an iFood order imported through Anota.AI', () => {
+      // Prévia temporária: pedidos do canal iFood chegam pela Anota.AI com origin=IFOOD,
+      // mas sem displayId — não existem na API do iFood, então as ações da comanda
+      // (confirmar/despachar/cancelar) não teriam a que responder.
+      orderStoreMock.items = [ifoodOrder({ displayId: null })]
+      const wrapper = mount(OrdersView)
+
+      expect(wrapper.find('[data-testid="order-o1-ticket-button"]').exists()).toBe(false)
+    })
+
     it('should refresh the list when the ticket reports a new status', async () => {
       orderStoreMock.items = [ifoodOrder()]
       ifoodOrderActionMock.dispatch.mockResolvedValue({

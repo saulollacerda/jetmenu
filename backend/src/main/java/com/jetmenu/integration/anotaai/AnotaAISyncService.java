@@ -21,6 +21,7 @@ import com.jetmenu.product.OrderCostCalculatorService;
 import com.jetmenu.product.ProductRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -48,6 +49,20 @@ public class AnotaAISyncService {
     private final AnotaAICatalogSyncService catalogSyncService;
     private final AnotaAIOrderImportService orderImportService;
 
+    /**
+     * FEATURE FLAG TEMPORÁRIA — prévia dos pedidos do iFood.
+     *
+     * <p>Enquanto a integração direta com o iFood não está no ar, a Anota.AI já devolve em
+     * {@code /ping/list} os pedidos que a loja recebeu pelo iFood ({@code salesChannel=ifood}).
+     * Com a flag ligada, esses pedidos são importados e gravados com
+     * {@link OrderOrigin#IFOOD} — o lojista vê o movimento do iFood dentro do JetMenu antes
+     * da integração definitiva.
+     *
+     * <p>Desligada por padrão. Remover junto com o {@code salesChannel=ifood} daqui quando a
+     * integração direta com o iFood assumir esses pedidos, para não importá-los em dobro.
+     */
+    private final boolean ifoodOrdersImportEnabled;
+
     public AnotaAISyncService(AnotaAIClient anotaAIClient,
                                MerchantRepository merchantRepository,
                                CategoryRepository categoryRepository,
@@ -60,11 +75,14 @@ public class AnotaAISyncService {
                                NotificationService notificationService,
                                OrderCostCalculatorService orderCostCalculatorService,
                                ExternalOrderRawPayloadService rawPayloadService,
-                               com.jetmenu.order.OrderFichaService orderFichaService) {
+                               com.jetmenu.order.OrderFichaService orderFichaService,
+                               @Value("${anotaai.import-ifood-orders-enabled:false}")
+                               boolean ifoodOrdersImportEnabled) {
         this.anotaAIClient = anotaAIClient;
         this.merchantRepository = merchantRepository;
         this.orderRepository = orderRepository;
         this.rawPayloadService = rawPayloadService;
+        this.ifoodOrdersImportEnabled = ifoodOrdersImportEnabled;
 
         this.catalogSyncService = new AnotaAICatalogSyncService(
                 anotaAIClient, merchantRepository, categoryRepository,
@@ -113,15 +131,16 @@ public class AnotaAISyncService {
         for (AnotaAIOrderListResponse.OrderSummary summary : list.getInfo().getDocs()) {
             String externalOrderId = summary.getId();
 
-            if (!"anotaai".equalsIgnoreCase(summary.getSalesChannel())) {
+            OrderOrigin origin = resolveOrigin(summary.getSalesChannel());
+            if (origin == null) {
                 log.info("[Anota.AI] pedido={} ignorado — salesChannel='{}'",
                         externalOrderId, summary.getSalesChannel());
                 ordersSkipped++;
                 continue;
             }
 
-            log.info("[Anota.AI] pedido={} from='{}' salesChannel='{}'",
-                    externalOrderId, summary.getFrom(), summary.getSalesChannel());
+            log.info("[Anota.AI] pedido={} from='{}' salesChannel='{}' origin={}",
+                    externalOrderId, summary.getFrom(), summary.getSalesChannel(), origin);
 
             if (orderRepository.existsByExternalOrderIdAndMerchantId(externalOrderId, merchantId)) {
                 ordersSkipped++;
@@ -138,10 +157,10 @@ public class AnotaAISyncService {
                     continue;
                 }
                 orderImportService.importOrder(
-                        detailResponse.body().getInfo(), merchantId, OrderOrigin.ANOTA_AI, missingIngredientNames,
+                        detailResponse.body().getInfo(), merchantId, origin, missingIngredientNames,
                         () -> catalogSyncService.sync(merchantId, apiKey, false),
                         catalogSynced);
-                rawPayloadService.save(merchantId, OrderOrigin.ANOTA_AI,
+                rawPayloadService.save(merchantId, origin,
                         externalOrderId, detailResponse.rawJson());
                 ordersImported++;
                 log.info("[Anota.AI] pedido {} importado", externalOrderId);
@@ -163,6 +182,16 @@ public class AnotaAISyncService {
                 merchantId, ordersImported, ordersSkipped, errors.size());
 
         return result;
+    }
+
+    /**
+     * Traduz o {@code salesChannel} da Anota.AI na origem com que o pedido é gravado.
+     * Retorna {@code null} para canais que não devem ser importados.
+     */
+    private OrderOrigin resolveOrigin(String salesChannel) {
+        if ("anotaai".equalsIgnoreCase(salesChannel)) return OrderOrigin.ANOTA_AI;
+        if (ifoodOrdersImportEnabled && "ifood".equalsIgnoreCase(salesChannel)) return OrderOrigin.IFOOD;
+        return null;
     }
 
     private String resolveApiKey(UUID merchantId) {
