@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { createStaleCache } from '@/utils/staleCache'
+import { createRequestSequence } from '@/utils/requestSequence'
 
 const TTL_MS = 5 * 60 * 1000
 import type { IngredientRequest, IngredientResponse } from '@/types/Ingredient'
@@ -15,6 +16,7 @@ export const useIngredientStore = defineStore('ingredient', () => {
   const error = ref<string | null>(null)
   const loaded = ref(false)
   const cache = createStaleCache(TTL_MS)
+  const requests = createRequestSequence()
 
   const search = ref('')
   const page = ref(0)
@@ -23,27 +25,35 @@ export const useIngredientStore = defineStore('ingredient', () => {
   const totalPages = ref(0)
 
   async function fetchPage(params: PageParams = {}) {
+    const effectiveSearch = params.search ?? search.value
+    // `search` alimenta o campo de busca (input controlado), então precisa refletir o
+    // que o usuário digitou de imediato. Atribuir depois do await devolvia o termo da
+    // resposta atrasada ao input, apagando as letras digitadas nesse meio-tempo.
+    search.value = effectiveSearch
+    const token = requests.next()
     loading.value = true
     error.value = null
     try {
       const result = await ingredientService.findAll({
-        search: params.search ?? search.value,
+        search: effectiveSearch,
         page: params.page ?? page.value,
         size: params.size ?? size.value,
       })
+      if (requests.isStale(token)) return
       items.value = result.content
-      search.value = params.search ?? search.value
       page.value = result.number
       size.value = result.size
       totalElements.value = result.totalElements
       totalPages.value = result.totalPages
       loaded.value = true
     } catch (e: unknown) {
+      // Falha de uma busca já superada não interessa mais ao usuário.
+      if (requests.isStale(token)) return
       loaded.value = false
       error.value = 'Erro ao carregar ingredientes'
       throw e
     } finally {
-      loading.value = false
+      if (!requests.isStale(token)) loading.value = false
     }
   }
 

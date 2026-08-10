@@ -137,4 +137,64 @@ describe('ingredientStore', () => {
       expect(mockedService.findAll).not.toHaveBeenCalled()
     })
   })
+
+  describe('concurrent searches', () => {
+    it('should expose the search term synchronously, before the request resolves', async () => {
+      let release!: (v: unknown) => void
+      mockedService.findAll.mockReturnValue(
+        new Promise((resolve) => {
+          release = resolve
+        }) as never,
+      )
+
+      const store = useIngredientStore()
+      const pending = store.fetchPage({ search: 'leite' })
+
+      // O campo de busca é controlado por `search`; ele não pode esperar a rede.
+      expect(store.search).toBe('leite')
+
+      release(asPage([]))
+      await pending
+    })
+
+    it('should not revert search to a stale term when an earlier response lands late', async () => {
+      const resolvers: Array<(v: unknown) => void> = []
+      mockedService.findAll.mockImplementation(
+        () => new Promise((resolve) => resolvers.push(resolve)) as never,
+      )
+
+      const store = useIngredientStore()
+      const first = store.fetchPage({ search: 'lei' })
+      const second = store.fetchPage({ search: 'leite ninho' })
+
+      // A resposta da busca antiga chega depois da nova (out-of-order).
+      resolvers[1]!(asPage([{ id: '2', name: 'Leite Ninho' }]))
+      resolvers[0]!(asPage([{ id: '1', name: 'Leite' }]))
+      await Promise.all([first, second])
+
+      expect(store.search).toBe('leite ninho')
+      expect(store.items).toEqual([{ id: '2', name: 'Leite Ninho' }])
+    })
+
+    it('should keep loading true while a newer request is still in flight', async () => {
+      const resolvers: Array<(v: unknown) => void> = []
+      mockedService.findAll.mockImplementation(
+        () => new Promise((resolve) => resolvers.push(resolve)) as never,
+      )
+
+      const store = useIngredientStore()
+      const first = store.fetchPage({ search: 'lei' })
+      const second = store.fetchPage({ search: 'leite' })
+
+      resolvers[0]!(asPage([]))
+      await first
+
+      expect(store.loading).toBe(true)
+
+      resolvers[1]!(asPage([]))
+      await second
+
+      expect(store.loading).toBe(false)
+    })
+  })
 })

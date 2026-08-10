@@ -5,6 +5,7 @@ import { DEFAULT_PAGE_SIZE } from '@/types/Page'
 import { orderService, type OrderFilterParams } from '@/services/orderService'
 import { useDashboardStore } from '@/stores/dashboardStore'
 import { createStaleCache } from '@/utils/staleCache'
+import { createRequestSequence } from '@/utils/requestSequence'
 import { REFRESH_INTERVAL_MS } from '@/utils/refresh'
 
 /** Extrai o `detail` do ProblemDetail retornado pelo backend, quando presente. */
@@ -25,6 +26,7 @@ export const useOrderStore = defineStore('order', () => {
   const loaded = ref(false)
   const loadedKey = ref<string | null>(null)
   const cache = createStaleCache(REFRESH_INTERVAL_MS)
+  const requests = createRequestSequence()
 
   const search = ref('')
   const page = ref(0)
@@ -47,10 +49,19 @@ export const useOrderStore = defineStore('order', () => {
     const effectiveSort = params.sort ?? sort.value
     const key = `${effectiveSearch}|${effectivePage}|${effectiveSize}|${effectiveSort}`
 
+    // `search`/`sort` alimentam controles da tela (o campo de busca é um input
+    // controlado), então são atualizados antes de qualquer await ou short-circuit —
+    // atribuí-los só depois da resposta devolvia ao input um termo já superado,
+    // apagando o que o usuário digitou enquanto a requisição estava em voo.
+    search.value = effectiveSearch
+    sort.value = effectiveSort
+
     // Serve the cache while it is fresh for the exact same query. Changing page,
     // search or sort produces a new key and always refetches; mutations invalidate
     // the cache so they refetch too.
     if (loaded.value && loadedKey.value === key && !cache.isStale()) return
+
+    const token = requests.next()
 
     // Stale-while-revalidate: full-view loading only before the first successful
     // load (empty screen). Afterwards keep the current rows visible and flag
@@ -65,9 +76,8 @@ export const useOrderStore = defineStore('order', () => {
         size: effectiveSize,
         sort: effectiveSort,
       })
+      if (requests.isStale(token)) return
       items.value = result.content
-      search.value = effectiveSearch
-      sort.value = effectiveSort
       page.value = result.number
       size.value = result.size
       totalElements.value = result.totalElements
@@ -77,14 +87,18 @@ export const useOrderStore = defineStore('order', () => {
       cache.markFresh()
       error.value = null
     } catch (e: unknown) {
+      // Falha de uma busca já superada não interessa mais ao usuário.
+      if (requests.isStale(token)) return
       loaded.value = false
       loadedKey.value = null
       cache.invalidate()
       if (!silent) error.value = 'Erro ao carregar pedidos'
       throw e
     } finally {
-      loading.value = false
-      refreshing.value = false
+      if (!requests.isStale(token)) {
+        loading.value = false
+        refreshing.value = false
+      }
     }
   }
 

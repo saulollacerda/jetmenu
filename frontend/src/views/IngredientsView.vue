@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useIngredientStore } from '@/stores/ingredientStore'
 import {
@@ -379,12 +379,32 @@ async function handleDelete() {
   confirmDeleteId.value = null
 }
 
+// O texto digitado é da tela, não do store: o campo responde a cada tecla sem esperar
+// a rede e sem re-filtrar a tabela inteira a cada letra. O store só recebe o termo
+// quando o debounce dispara — e a partir daí é ele quem manda (voltar de outra tela,
+// limpar filtros), por isso o watch de sincronização abaixo.
+const searchInput = ref(store.search)
 let searchDebounce: ReturnType<typeof setTimeout> | null = null
 function onSearchInput(v: string) {
-  store.search = v
+  searchInput.value = v
   if (searchDebounce) clearTimeout(searchDebounce)
-  searchDebounce = setTimeout(() => store.fetchPage({ search: v, page: 0 }), 300)
+  searchDebounce = setTimeout(() => {
+    searchDebounce = null
+    store.fetchPage({ search: v, page: 0 })
+  }, 300)
 }
+watch(
+  () => store.search,
+  (term) => {
+    // Enquanto há debounce pendente o campo é do usuário: nada vindo do store pode
+    // sobrescrever o que ele está digitando.
+    if (searchDebounce) return
+    if (term !== searchInput.value) searchInput.value = term
+  },
+)
+onBeforeUnmount(() => {
+  if (searchDebounce) clearTimeout(searchDebounce)
+})
 function onPageChange(p: number) {
   if (p < 0 || p >= store.totalPages) return
   store.fetchPage({ page: p })
@@ -443,7 +463,7 @@ const tableMinWidth = '864px'
 
       <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap">
         <UISearch
-          :model-value="store.search"
+          :model-value="searchInput"
           placeholder="Buscar ingrediente por nome…"
           :width="340"
           @update:model-value="onSearchInput"
