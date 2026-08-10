@@ -38,4 +38,17 @@ class SecurityConfigCorsTest {
         assertThat(corsConfiguration).isNotNull();
         assertThat(corsConfiguration.getAllowedOrigins()).contains("http://localhost:5173");
     }
+
+    @Test
+    @DisplayName("default origins include the local app.jetmenu.test domain served through Caddy")
+    void defaultOriginsIncludeLocalDomain() {
+        SecurityConfig securityConfig = new SecurityConfig();
+        ReflectionTestUtils.setField(securityConfig, "allowedOrigins",
+                "http://localhost,http://localhost:80,http://localhost:5173,https://app.jetmenu.test");
+
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/plans");
+        CorsConfiguration configuration = securityConfig.corsConfigurationSource().getCorsConfiguration(request);
+
+        assertThat(configuration.getAllowedOrigins()).contains("https://app.jetmenu.test");
+    }
 }

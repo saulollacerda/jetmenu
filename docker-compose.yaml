@@ -12,6 +12,73 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jetmenu -d jetmenu_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jetmenu-dev
+
+  backend:
+    image: eclipse-temurin:21-jdk
+    container_name: jetmenu_backend
+    working_dir: /app
+    command: ["sh", "-c", "./mvnw spring-boot:run -Dspring-boot.run.profiles=dev 2>&1 | tee /var/log/app/backend.log"]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/jetmenu_dev
+      SPRING_DATASOURCE_USERNAME: jetmenu
+      SPRING_DATASOURCE_PASSWORD: jetmenu
+    volumes:
+      - ./backend:/app
+      - maven_repo:/root/.m2
+      - ./logs:/var/log/app
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - jetmenu-dev
+
+  frontend:
+    image: node:20-alpine
+    container_name: jetmenu_frontend
+    working_dir: /app
+    command: ["sh", "-c", "npm install && npm run dev -- --host 0.0.0.0 2>&1 | tee /var/log/app/frontend.log"]
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8080
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - ./logs:/var/log/app
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    networks:
+      - jetmenu-dev
+
+  landing-page:
+    image: node:20-alpine
+    container_name: jetmenu_lp
+    working_dir: /app
+    command: ["sh", "-c", "npm install && npm run dev -- -H 0.0.0.0 2>&1 | tee /var/log/app/landing-page.log"]
+    volumes:
+      - ../jetmenu-lp:/app
+      - lp_node_modules:/app/node_modules
+      - ./logs:/var/log/app
+    ports:
+      - "3000:3000"
+    networks:
+      - jetmenu-dev
+
+networks:
+  jetmenu-dev:
+    driver: bridge
 
 volumes:
   postgres_data:
+  maven_repo:
+  frontend_node_modules:
+  lp_node_modules:

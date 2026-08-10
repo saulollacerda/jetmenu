@@ -22,22 +22,36 @@ A financial management system for delivery restaurants — built as a monorepo w
 - [Docker](https://www.docker.com/) & Docker Compose
 - (Optional for local dev) Java 21, Node.js ≥20.19.0
 
-### Running with Docker
+### Running with Docker (dev)
+
+One command brings up the database, backend (hot reload via `spring-boot-devtools`), frontend (Vite HMR) and the marketing landing page, all in dev mode:
 
 ```bash
-# 1. Configure environment variables
-cp .env.example .env
-# Edit .env with your database credentials
-
-# 2. Start all services
-docker compose up --build
+docker compose up
 ```
 
-| Service    | URL                      |
-| ---------- | ------------------------ |
-| Frontend   | http://localhost         |
-| Backend API| http://localhost:8080 (direct) / http://localhost/api (via frontend proxy) |
-| Database   | localhost:5432           |
+This expects the `jetmenu-lp` repo — a separate Next.js project, not part of this monorepo — cloned as a sibling of this one, at `../jetmenu-lp`.
+
+| Service         | URL                     |
+| ---------------- | ----------------------- |
+| Frontend (Vite)  | http://localhost:5173   |
+| Landing page     | http://localhost:3000   |
+| Backend API      | http://localhost:8080   |
+| Database         | localhost:5432           |
+
+Each service also mirrors its stdout/stderr to a plain-text file under `./logs/` (`backend.log`, `frontend.log`, `landing-page.log`), truncated on every `docker compose up` — handy for tailing or grepping without the Docker CLI.
+
+**Backend hot reload caveat:** `spring-boot-devtools` restarts the JVM when `.class` files under `backend/target/classes` change, but it does not recompile `.java` sources by itself. If your IDE is configured to build to `target/classes` automatically (e.g. IntelliJ's "Build Project Automatically" + `compiler.automake.allow.when.app.running=true`), saving a file reloads the backend on its own. Otherwise, run `docker compose exec backend ./mvnw compile` after editing, or restart the `backend` service.
+
+The Caddy reverse proxy for the `*.test` domains (`Caddyfile`) is **not** part of this compose file — it keeps running as its own process on the host, pointed at these same ports.
+
+For a production-like build (Nginx-served frontend, `prod` Spring profile):
+
+```bash
+cp .env.example .env
+# Edit .env with your database credentials
+docker compose -f docker-compose-prod.yaml up --build
+```
 
 ### Running Locally (without Docker)
 

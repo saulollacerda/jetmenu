@@ -15,6 +15,9 @@ docker-compose.override.yml
 # Maven
 target/
 
+# Dev docker compose service logs
+logs/
+
 # Terraform
 infra/terraform.tfvars
 infra/.terraform/
