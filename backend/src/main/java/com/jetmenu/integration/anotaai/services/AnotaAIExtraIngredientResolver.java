@@ -121,6 +121,13 @@ public class AnotaAIExtraIngredientResolver {
      * Retorna a quantidade específica do produto para o ingrediente, se houver um
      * {@link Include} não-PACKAGING com nome canônico correspondente. Caso contrário,
      * usa {@code ingredient.defaultQuantity} ou {@link BigDecimal#ONE} como fallback.
+     *
+     * <p><b>Gramatura zero é tratada como "não configurada", nunca como zero literal.</b>
+     * A tela de ingredientes grava {@code defaultQuantity = 0} quando o lojista não informa
+     * a gramatura, e linhas legadas da ficha técnica podem ter {@code quantity = 0}. Aceitar
+     * esse zero zerava a quantidade — e, por consequência, o custo — do extra no pedido,
+     * mesmo com o match por nome funcionando (bug reportado em pedidos do iFood, cujos
+     * combos trazem muitos complementos fora da ficha técnica do produto).
      */
     private BigDecimal resolveQuantityForProduct(List<Include> productIncludes,
                                                   String canonical,
@@ -128,13 +135,19 @@ public class AnotaAIExtraIngredientResolver {
         if (productIncludes != null) {
             for (Include inc : productIncludes) {
                 if (inc.getKind() == IncludeKind.PACKAGING) continue;
-                if (inc.getName() == null || inc.getQuantity() == null) continue;
+                if (inc.getName() == null || !isPositive(inc.getQuantity())) continue;
                 if (IngredientNameNormalizer.normalize(inc.getName()).equals(canonical)) {
                     return inc.getQuantity();
                 }
             }
         }
-        return ingredient.getDefaultQuantity() != null ? ingredient.getDefaultQuantity() : BigDecimal.ONE;
+        return isPositive(ingredient.getDefaultQuantity())
+                ? ingredient.getDefaultQuantity()
+                : BigDecimal.ONE;
+    }
+
+    private static boolean isPositive(BigDecimal value) {
+        return value != null && value.compareTo(BigDecimal.ZERO) > 0;
     }
 
     /**
