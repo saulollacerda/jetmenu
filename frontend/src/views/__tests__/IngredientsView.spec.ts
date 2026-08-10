@@ -98,6 +98,34 @@ describe('IngredientsView', () => {
     })
   })
 
+  it('should omit default quantity when left blank instead of persisting zero', async () => {
+    // Gravar 0 fazia o import de pedidos (iFood/Anota.AI) zerar a gramatura e o custo
+    // do complemento. Em branco significa "não configurado", não "zero gramas".
+    const wrapper = mount(IngredientsView)
+
+    await wrapper.get('[data-testid="new-ingredient-button"]').trigger('click')
+
+    await wrapper.get('input[placeholder="Nome do ingrediente"]').setValue('Leite Ninho')
+    await wrapper.get('input[placeholder="Ex: kg, L, un"]').setValue('g')
+    await wrapper.get('[data-testid="ingredient-cost-per-unit-input"]').setValue('0.02')
+
+    await wrapper.get('form').trigger('submit')
+
+    expect(ingredientStoreMock.create).toHaveBeenCalledWith({
+      name: 'Leite Ninho',
+      unit: 'g',
+      costPerUnit: 0.02,
+      defaultQuantity: undefined,
+    })
+  })
+
+  it('should start the default quantity field empty rather than showing zero', async () => {
+    const wrapper = mount(IngredientsView)
+    await wrapper.get('[data-testid="new-ingredient-button"]').trigger('click')
+    const input = wrapper.get('[data-testid="ingredient-default-quantity-input"]')
+    expect((input.element as HTMLInputElement).value).toBe('')
+  })
+
   it('should accept cost per unit with four decimal places', async () => {
     const wrapper = mount(IngredientsView)
 

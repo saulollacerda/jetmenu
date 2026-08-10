@@ -7,6 +7,8 @@ import com.jetmenu.notification.NotificationService;
 import com.jetmenu.order.OrderItemExtraIngredient;
 import com.jetmenu.order.OrderItemUnmatchedSubItem;
 import com.jetmenu.order.ResolvedSubItems;
+import com.jetmenu.product.Include;
+import com.jetmenu.product.IncludeKind;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -169,6 +171,51 @@ class AnotaAIExtraIngredientResolverTest {
         assertThat(extra.getCostPerUnit()).isEqualByComparingTo("0.0500");
         assertThat(extra.getIngredientName()).isEqualTo("Açaí Premium");
         assertThat(extra.getIngredientUnit()).isEqualTo("g");
+    }
+
+    @Test
+    @DisplayName("ingrediente com defaultQuantity zerada cai no fallback 1 em vez de zerar a gramatura")
+    void shouldFallBackToOneWhenIngredientDefaultQuantityIsZero() {
+        // Cenário reportado por lojistas em pedidos do iFood: o complemento casa pelo nome
+        // ("Leite Ninho"), mas a tela de ingredientes salva defaultQuantity = 0 por padrão.
+        // Zero não é gramatura — é "não configurado" — e zerava quantidade e custo do extra.
+        Ingredient leiteNinho = ingredient("Leite Ninho", "leite ninho",
+                new BigDecimal("0.0200"), BigDecimal.ZERO);
+        given(ingredientRepository.findFirstByCanonicalNameAndMerchantIdOrderByIdAsc(
+                eq("leite ninho"), any(UUID.class))).willReturn(Optional.of(leiteNinho));
+
+        List<OrderItemExtraIngredient> extras = resolver().resolve(
+                List.of(subItem("Leite Ninho", 1, 0.0, 0.0)),
+                new ArrayList<>(), MERCHANT_ID, new HashSet<>()).extras();
+
+        OrderItemExtraIngredient extra = extras.get(0);
+
+        assertThat(extra.getQuantity()).isEqualByComparingTo("1");
+        assertThat(extra.getCostPerUnit()).isEqualByComparingTo("0.0200");
+    }
+
+    @Test
+    @DisplayName("include da ficha técnica com quantidade zerada não zera a gramatura do extra")
+    void shouldIgnoreZeroQuantityIncludeWhenResolvingGramatura() {
+        // Linhas legadas da ficha técnica podem ter quantity = 0 (a API hoje exige > 0).
+        // Nesse caso vale a defaultQuantity do ingrediente, não o zero do include.
+        Ingredient leiteNinho = ingredient("Leite Ninho", "leite ninho",
+                new BigDecimal("0.0200"), new BigDecimal("50"));
+        given(ingredientRepository.findFirstByCanonicalNameAndMerchantIdOrderByIdAsc(
+                eq("leite ninho"), any(UUID.class))).willReturn(Optional.of(leiteNinho));
+
+        Include zeroed = Include.builder()
+                .name("Leite Ninho")
+                .cost(new BigDecimal("0.0200"))
+                .quantity(BigDecimal.ZERO)
+                .kind(IncludeKind.INGREDIENT)
+                .build();
+
+        List<OrderItemExtraIngredient> extras = resolver().resolve(
+                List.of(subItem("Leite Ninho", 1, 0.0, 0.0)),
+                List.of(zeroed), MERCHANT_ID, new HashSet<>()).extras();
+
+        assertThat(extras.get(0).getQuantity()).isEqualByComparingTo("50");
     }
 
     @Test
