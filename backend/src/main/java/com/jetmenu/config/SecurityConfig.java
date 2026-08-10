@@ -25,7 +25,7 @@ import java.util.List;
 @EnableWebSecurity
 public class SecurityConfig {
 
-    @Value("${cors.allowed-origins:http://localhost,http://localhost:80,http://localhost:5173}")
+    @Value("${cors.allowed-origins:http://localhost,http://localhost:80,http://localhost:5173,https://app.jetmenu.test}")
     private String allowedOrigins;
 
     @Bean

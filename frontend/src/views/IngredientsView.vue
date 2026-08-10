@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useIngredientStore } from '@/stores/ingredientStore'
 import {
@@ -40,7 +40,15 @@ const { showToast } = useToast()
 
 const showModal = ref(false)
 const editing = ref<IngredientResponse | null>(null)
-const form = ref<IngredientRequest>({ name: '', unit: '', costPerUnit: 0, defaultQuantity: 0 })
+// `defaultQuantity` fica indefinida enquanto o lojista não informa a gramatura.
+// Nunca 0: o import de pedidos usa esse campo como gramatura do complemento e um
+// zero gravado zerava a quantidade — e o custo — do extra no pedido.
+const form = ref<IngredientRequest>({
+  name: '',
+  unit: '',
+  costPerUnit: 0,
+  defaultQuantity: undefined,
+})
 const confirmDeleteId = ref<string | null>(null)
 
 const autoCalcCost = ref(false)
@@ -237,7 +245,7 @@ function resetAuto() {
 
 async function openCreate(prefilledName = '') {
   editing.value = null
-  form.value = { name: prefilledName, unit: '', costPerUnit: 0, defaultQuantity: 0 }
+  form.value = { name: prefilledName, unit: '', costPerUnit: 0, defaultQuantity: undefined }
   specificGrammages.value = []
   toDelete.value = []
   newSpecificProductId.value = ''
@@ -254,7 +262,7 @@ async function openEdit(ing: IngredientResponse) {
     name: ing.name,
     unit: ing.unit,
     costPerUnit: ing.costPerUnit,
-    defaultQuantity: ing.defaultQuantity ?? 0,
+    defaultQuantity: ing.defaultQuantity || undefined,
   }
   specificGrammages.value = []
   toDelete.value = []
@@ -281,7 +289,7 @@ async function openDuplicate(ing: IngredientResponse) {
   await openCreate(`${ing.name} (cópia)`)
   form.value.unit = ing.unit
   form.value.costPerUnit = ing.costPerUnit
-  form.value.defaultQuantity = ing.defaultQuantity ?? 0
+  form.value.defaultQuantity = ing.defaultQuantity || undefined
   try {
     const usages: IngredientProductUsageResponse[] = await ingredientService.fetchUsages(ing.id)
     // No includeId: submitting must create new includes for the copy, never
@@ -316,6 +324,9 @@ async function handleSubmit() {
     if (computedCostPerUnit.value == null) return
     form.value.costPerUnit = Number(computedCostPerUnit.value.toFixed(4))
   }
+  // Campo vazio (`''` do v-model.number) ou 0 significam "sem gramatura padrão".
+  const quantity = Number(form.value.defaultQuantity)
+  form.value.defaultQuantity = quantity > 0 ? quantity : undefined
   try {
     if (editing.value) {
       await store.update(editing.value.id, form.value)
@@ -368,12 +379,32 @@ async function handleDelete() {
   confirmDeleteId.value = null
 }
 
+// O texto digitado é da tela, não do store: o campo responde a cada tecla sem esperar
+// a rede e sem re-filtrar a tabela inteira a cada letra. O store só recebe o termo
+// quando o debounce dispara — e a partir daí é ele quem manda (voltar de outra tela,
+// limpar filtros), por isso o watch de sincronização abaixo.
+const searchInput = ref(store.search)
 let searchDebounce: ReturnType<typeof setTimeout> | null = null
 function onSearchInput(v: string) {
-  store.search = v
+  searchInput.value = v
   if (searchDebounce) clearTimeout(searchDebounce)
-  searchDebounce = setTimeout(() => store.fetchPage({ search: v, page: 0 }), 300)
+  searchDebounce = setTimeout(() => {
+    searchDebounce = null
+    store.fetchPage({ search: v, page: 0 })
+  }, 300)
 }
+watch(
+  () => store.search,
+  (term) => {
+    // Enquanto há debounce pendente o campo é do usuário: nada vindo do store pode
+    // sobrescrever o que ele está digitando.
+    if (searchDebounce) return
+    if (term !== searchInput.value) searchInput.value = term
+  },
+)
+onBeforeUnmount(() => {
+  if (searchDebounce) clearTimeout(searchDebounce)
+})
 function onPageChange(p: number) {
   if (p < 0 || p >= store.totalPages) return
   store.fetchPage({ page: p })
@@ -432,7 +463,7 @@ const tableMinWidth = '864px'
 
       <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap">
         <UISearch
-          :model-value="store.search"
+          :model-value="searchInput"
           placeholder="Buscar ingrediente por nome…"
           :width="340"
           @update:model-value="onSearchInput"

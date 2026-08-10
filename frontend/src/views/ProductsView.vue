@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onBeforeUnmount, watch } from 'vue'
 import { useProductStore } from '@/stores/productStore'
 import { useCategoryStore } from '@/stores/categoryStore'
 import { useAnotaAIStore } from '@/stores/anotaAIStore'
@@ -68,12 +68,29 @@ const filteredItems = computed(() => {
 
 const activeCount = computed(() => productStore.items.filter((p) => p.status === 'ACTIVE').length)
 
+// O texto digitado é da tela, não do store: o campo responde a cada tecla sem esperar
+// a rede. O store só recebe o termo quando o debounce dispara. Ver IngredientsView.
+const searchInput = ref(productStore.search)
 let searchDebounce: ReturnType<typeof setTimeout> | null = null
 function onSearchInput(v: string) {
-  productStore.search = v
+  searchInput.value = v
   if (searchDebounce) clearTimeout(searchDebounce)
-  searchDebounce = setTimeout(() => productStore.fetchPage({ search: v, page: 0 }), 300)
+  searchDebounce = setTimeout(() => {
+    searchDebounce = null
+    productStore.fetchPage({ search: v, page: 0 })
+  }, 300)
 }
+watch(
+  () => productStore.search,
+  (term) => {
+    // Enquanto há debounce pendente o campo é do usuário.
+    if (searchDebounce) return
+    if (term !== searchInput.value) searchInput.value = term
+  },
+)
+onBeforeUnmount(() => {
+  if (searchDebounce) clearTimeout(searchDebounce)
+})
 function onPageChange(p: number) {
   if (p < 0 || p >= productStore.totalPages) return
   productStore.fetchPage({ page: p })
@@ -334,7 +351,7 @@ onMounted(() => {
 
       <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap">
         <UISearch
-          :model-value="productStore.search"
+          :model-value="searchInput"
           placeholder="Buscar produto por nome…"
           :width="340"
           @update:model-value="onSearchInput"

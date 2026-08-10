@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { createStaleCache } from '@/utils/staleCache'
+import { createRequestSequence } from '@/utils/requestSequence'
 
 const TTL_MS = 5 * 60 * 1000
 import type {
@@ -21,6 +22,7 @@ export const useProductStore = defineStore('product', () => {
   const error = ref<string | null>(null)
   const loaded = ref(false)
   const cache = createStaleCache(TTL_MS)
+  const requests = createRequestSequence()
 
   // pagination state
   const search = ref('')
@@ -30,27 +32,33 @@ export const useProductStore = defineStore('product', () => {
   const totalPages = ref(0)
 
   async function fetchPage(params: PageParams = {}) {
+    const effectiveSearch = params.search ?? search.value
+    // Ver ingredientStore.fetchPage: `search` alimenta o input controlado e precisa
+    // ser atualizado antes do await, nunca com o termo de uma resposta atrasada.
+    search.value = effectiveSearch
+    const token = requests.next()
     loading.value = true
     error.value = null
     try {
       const result = await productService.findAll({
-        search: params.search ?? search.value,
+        search: effectiveSearch,
         page: params.page ?? page.value,
         size: params.size ?? size.value,
       })
+      if (requests.isStale(token)) return
       items.value = result.content
-      search.value = params.search ?? search.value
       page.value = result.number
       size.value = result.size
       totalElements.value = result.totalElements
       totalPages.value = result.totalPages
       loaded.value = true
     } catch (e: unknown) {
+      if (requests.isStale(token)) return
       loaded.value = false
       error.value = 'Erro ao carregar produtos'
       throw e
     } finally {
-      loading.value = false
+      if (!requests.isStale(token)) loading.value = false
     }
   }
 

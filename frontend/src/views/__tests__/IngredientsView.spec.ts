@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { reactive } from 'vue'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let ingredientStoreMock: any
@@ -55,7 +56,9 @@ import { includeService } from '@/services/includeService'
 
 describe('IngredientsView', () => {
   beforeEach(() => {
-    ingredientStoreMock = {
+    // `reactive` para que a view reaja a mudanças no store como em produção — sem
+    // isso, uma reescrita de `search` vinda do store passa despercebida no teste.
+    ingredientStoreMock = reactive({
       items: [],
       loading: false,
       error: null,
@@ -71,7 +74,7 @@ describe('IngredientsView', () => {
       remove: vi.fn(),
       moveWithinPage: vi.fn().mockResolvedValue(undefined),
       moveToPage: vi.fn().mockResolvedValue(undefined),
-    }
+    })
     routeMock.query = {}
     routerMock.replace.mockClear()
     routerMock.push.mockClear()
@@ -96,6 +99,48 @@ describe('IngredientsView', () => {
       costPerUnit: 0.02,
       defaultQuantity: 20,
     })
+  })
+
+  it('should omit default quantity when left blank instead of persisting zero', async () => {
+    // Gravar 0 fazia o import de pedidos (iFood/Anota.AI) zerar a gramatura e o custo
+    // do complemento. Em branco significa "não configurado", não "zero gramas".
+    const wrapper = mount(IngredientsView)
+
+    await wrapper.get('[data-testid="new-ingredient-button"]').trigger('click')
+
+    await wrapper.get('input[placeholder="Nome do ingrediente"]').setValue('Leite Ninho')
+    await wrapper.get('input[placeholder="Ex: kg, L, un"]').setValue('g')
+    await wrapper.get('[data-testid="ingredient-cost-per-unit-input"]').setValue('0.02')
+
+    await wrapper.get('form').trigger('submit')
+
+    expect(ingredientStoreMock.create).toHaveBeenCalledWith({
+      name: 'Leite Ninho',
+      unit: 'g',
+      costPerUnit: 0.02,
+      defaultQuantity: undefined,
+    })
+  })
+
+  it('should start the default quantity field empty rather than showing zero', async () => {
+    const wrapper = mount(IngredientsView)
+    await wrapper.get('[data-testid="new-ingredient-button"]').trigger('click')
+    const input = wrapper.get('[data-testid="ingredient-default-quantity-input"]')
+    expect((input.element as HTMLInputElement).value).toBe('')
+  })
+
+  it('should keep the typed search term when the store reverts to a stale one', async () => {
+    // Reprodução do relato "as letras não saem ou apagam as outras": a resposta de uma
+    // busca anterior chegava atrasada e reescrevia `store.search`, e o input — que era
+    // controlado por ele — voltava para o termo antigo no meio da digitação.
+    const wrapper = mount(IngredientsView)
+    const input = wrapper.get('input[placeholder="Buscar ingrediente por nome…"]')
+
+    await input.setValue('lei')
+    ingredientStoreMock.search = 'l'
+    await flushPromises()
+
+    expect((input.element as HTMLInputElement).value).toBe('lei')
   })
 
   it('should accept cost per unit with four decimal places', async () => {
