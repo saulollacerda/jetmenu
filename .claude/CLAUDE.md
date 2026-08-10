@@ -19,6 +19,10 @@ Monorepo: Java Spring Boot backend + Vue 3 frontend.
 
 Merge flow: `feature/*` → `develop` → `main`.
 
+## Running the App (Dev)
+
+`docker compose up` from the repo root starts everything at once: Postgres, backend (hot reload via `spring-boot-devtools`), frontend (Vite), and the landing page. Requires the `jetmenu-lp` repo cloned as a sibling directory (`../jetmenu-lp`) — it's a separate Next.js project, not part of this monorepo. See [skills/verify/SKILL.md](skills/verify/SKILL.md) for details, gotchas, and how to drive the UI for verification.
+
 ## Coding Guidelines
 
 @docs/CODING_GUIDELINES.md

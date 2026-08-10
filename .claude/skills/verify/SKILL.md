@@ -7,7 +7,20 @@ description: Build, launch, and drive JetMenu locally to verify changes at the r
 
 ## Stack pieces (all three needed for auth/data flows)
 
-1. **Postgres** — `docker compose up -d` at repo root (service `jetmenu_db`, DB `jetmenu_dev`, user/pass `jetmenu`/`jetmenu`). If Docker Desktop is *paused*, `docker desktop restart` clears it (there is no CLI unpause). Note: on this machine the native Postgres on `127.0.0.1:5432` wins over the Docker container for `localhost` connections, so that's the instance the app actually talks to.
+**Default: one command.** `docker compose up` at repo root starts Postgres, backend, frontend, and the landing page together on a shared Docker network (requires the `jetmenu-lp` repo cloned as a sibling at `../jetmenu-lp`). The backend talks to Postgres via the `db` service name, not `localhost`, so the native-Postgres-port-conflict gotcha below doesn't apply here. If Docker Desktop is *paused*, `docker desktop restart` clears it (there is no CLI unpause).
+
+- Backend: `http://localhost:8080` (`/actuator/health` answers 401 when up — that still means "alive")
+- Frontend: `http://localhost:5173`
+- Landing page: `http://localhost:3000`
+- Postgres: `localhost:5432` (DB `jetmenu_dev`, user/pass `jetmenu`/`jetmenu`)
+
+Each service also mirrors its stdout to a plain-text file — `logs/backend.log`, `logs/frontend.log`, `logs/landing-page.log` — read or grep those directly instead of `docker compose logs`.
+
+Backend hot reload: `spring-boot-devtools` restarts the JVM when `.class` files under `backend/target/classes` change, but it does not recompile `.java` by itself. Works automatically only if the IDE is set to build to `target/classes` on save; otherwise run `docker compose exec backend ./mvnw compile` after editing backend code, then re-check the log.
+
+### Running natively instead (e.g. to attach a debugger)
+
+1. **Postgres** — `docker compose up -d db` (service `jetmenu_db`). Note: on this machine the native Postgres on `127.0.0.1:5432` wins over the Docker container for `localhost` connections, so that's the instance a natively-run backend actually talks to.
 2. **Backend** — `cd backend && ./mvnw spring-boot:run` (port 8080; `/actuator/health` answers 401 when up — that still means "alive").
 3. **Frontend** — `cd frontend && npm run dev` (Vite, port 5173).
 

@@ -1,0 +1,14 @@
+jetmenu.test {
+    tls internal
+    reverse_proxy localhost:3000
+}
+
+app.jetmenu.test {
+    tls internal
+    reverse_proxy localhost:5173
+}
+
+api.jetmenu.test {
+    tls internal
+    reverse_proxy localhost:8080
+}
