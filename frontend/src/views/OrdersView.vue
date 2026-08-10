@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePolling } from '@/composables/usePolling'
 import { REFRESH_INTERVAL_MS } from '@/utils/refresh'
@@ -514,14 +514,29 @@ const filteredItems = computed(() => {
   return orderStore.items.filter((o) => o.status === filterStatus.value)
 })
 
+// O texto digitado é da tela, não do store: o campo responde a cada tecla sem esperar
+// a rede. O store só recebe o termo quando o debounce dispara. Ver IngredientsView.
+const searchInput = ref(orderStore.search)
 let searchDebounce: ReturnType<typeof setTimeout> | null = null
 function onSearchInput(value: string) {
-  orderStore.search = value
+  searchInput.value = value
   if (searchDebounce) clearTimeout(searchDebounce)
   searchDebounce = setTimeout(() => {
+    searchDebounce = null
     orderStore.fetchPage({ search: value, page: 0 })
   }, 300)
 }
+watch(
+  () => orderStore.search,
+  (term) => {
+    // Enquanto há debounce pendente o campo é do usuário.
+    if (searchDebounce) return
+    if (term !== searchInput.value) searchInput.value = term
+  },
+)
+onBeforeUnmount(() => {
+  if (searchDebounce) clearTimeout(searchDebounce)
+})
 function onSortChange(value: string) {
   orderStore.fetchPage({ sort: value, page: 0 })
 }
@@ -881,7 +896,7 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
         </div>
         <div style="flex: 1" />
         <UISearch
-          :model-value="orderStore.search"
+          :model-value="searchInput"
           placeholder="Buscar por cliente…"
           :width="260"
           @update:model-value="onSearchInput"
