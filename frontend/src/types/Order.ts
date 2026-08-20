@@ -205,5 +205,31 @@ export interface OrderResponse {
   pickupCode?: string | null
   takeoutMode?: string | null
   takeoutDateTime?: string | null
+
+  // --- Sobrescrita manual de valor e custo (correção de realidade pelo lojista) ---
+  // Todos nulos/ausentes em pedidos que nunca tiveram os valores editados manualmente.
+
+  // O snapshot é tirado UMA vez, na primeira edição manual, e nunca é reescrito:
+  // uma segunda edição não desloca a base — ela continua sendo o valor que o sistema
+  // havia calculado antes de qualquer intervenção do lojista.
+
+  /** `totalValue` calculado pelo sistema antes da primeira edição manual. */
+  originalTotalValue?: number | null
+  /** `totalCost` calculado pelo sistema antes da primeira edição manual. */
+  originalTotalCost?: number | null
+  /** `estimatedProfit` calculado pelo sistema antes da primeira edição manual. */
+  originalEstimatedProfit?: number | null
+  /**
+   * Data/hora (ISO) da primeira sobrescrita manual de valor e custo do pedido.
+   * É esta flag — não os campos `original*` — que indica se o pedido está com valores
+   * ajustados manualmente: null significa que o pedido nunca foi editado.
+   */
+  valuesOverriddenAt?: string | null
+}
+
+/** Corpo da sobrescrita manual de valor total e custo do pedido pelo lojista. */
+export interface OrderValuesRequest {
+  totalValue: number
+  totalCost: number
 }
 

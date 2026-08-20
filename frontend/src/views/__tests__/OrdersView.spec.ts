@@ -161,6 +161,8 @@ describe('OrdersView', () => {
       create: vi.fn().mockResolvedValue({}),
       update: vi.fn(),
       remove: vi.fn(),
+      updateValues: vi.fn(),
+      restoreValues: vi.fn(),
     }
 
     customerStoreMock = {
@@ -1353,6 +1355,190 @@ describe('OrdersView', () => {
       await flushPromises()
 
       expect(wrapper.find('[data-testid="order-detail-modal"]').exists()).toBe(false)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Sobrescrita manual de valor total e custo do pedido
+  // -------------------------------------------------------------------------
+
+  describe('manual value override', () => {
+    function makeOrder(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'o1',
+        dateTime: '2026-05-14T10:00:00',
+        customerId: 'c1',
+        customerName: 'João',
+        status: 'PAID',
+        totalValue: 60,
+        totalCost: 34,
+        estimatedProfit: 26,
+        marginPct: 43.33,
+        items: [],
+        ...overrides,
+      }
+    }
+
+    async function openDetail(order: ReturnType<typeof makeOrder>) {
+      orderStoreMock.items = [order]
+      const wrapper = mount(OrdersView)
+      await wrapper.get('[data-testid="order-o1-detail-button"]').trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    it('should not show the edit-values form nor the original-values block by default', async () => {
+      const wrapper = await openDetail(makeOrder())
+
+      expect(wrapper.find('[data-testid="order-detail-values-form"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="order-detail-original-values"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="order-detail-edit-values-button"]').exists()).toBe(true)
+    })
+
+    it('should open the edit-values form pre-filled with the current total value and cost', async () => {
+      const wrapper = await openDetail(makeOrder({ totalValue: 60, totalCost: 34 }))
+
+      await wrapper.get('[data-testid="order-detail-edit-values-button"]').trigger('click')
+
+      const totalValueInput = wrapper.get(
+        '[data-testid="order-detail-values-total-value-input"]',
+      )
+      const totalCostInput = wrapper.get('[data-testid="order-detail-values-total-cost-input"]')
+      expect((totalValueInput.element as HTMLInputElement).value).toBe('60')
+      expect((totalCostInput.element as HTMLInputElement).value).toBe('34')
+    })
+
+    it('should close the edit-values form on cancel without calling the store', async () => {
+      const wrapper = await openDetail(makeOrder())
+
+      await wrapper.get('[data-testid="order-detail-edit-values-button"]').trigger('click')
+      await wrapper.get('[data-testid="order-detail-values-cancel-button"]').trigger('click')
+
+      expect(wrapper.find('[data-testid="order-detail-values-form"]').exists()).toBe(false)
+      expect(orderStoreMock.updateValues).not.toHaveBeenCalled()
+    })
+
+    it('should send the edited values and re-render the cards from the response on save', async () => {
+      const wrapper = await openDetail(makeOrder({ totalValue: 60, totalCost: 34, estimatedProfit: 26 }))
+
+      orderStoreMock.updateValues.mockResolvedValue(
+        makeOrder({
+          totalValue: 45,
+          totalCost: 18,
+          estimatedProfit: 27,
+          marginPct: 60,
+          originalTotalValue: 60,
+          originalTotalCost: 34,
+          originalEstimatedProfit: 26,
+          valuesOverriddenAt: '2026-08-20T12:00:00',
+        }),
+      )
+
+      await wrapper.get('[data-testid="order-detail-edit-values-button"]').trigger('click')
+      await wrapper
+        .get('[data-testid="order-detail-values-total-value-input"]')
+        .setValue('45')
+      await wrapper.get('[data-testid="order-detail-values-total-cost-input"]').setValue('18')
+      await wrapper.get('[data-testid="order-detail-values-save-button"]').trigger('click')
+      await flushPromises()
+
+      expect(orderStoreMock.updateValues).toHaveBeenCalledWith('o1', {
+        totalValue: 45,
+        totalCost: 18,
+      })
+      const detail = wrapper.get('[data-testid="order-detail-modal"]')
+      expect(detail.get('[data-testid="order-detail-total-cost"]').text()).toMatch(/18/)
+      expect(detail.get('[data-testid="order-detail-estimated-profit"]').text()).toMatch(/27/)
+      expect(wrapper.find('[data-testid="order-detail-values-form"]').exists()).toBe(false)
+    })
+
+    it('should refuse to save when a field is cleared instead of sending zero', async () => {
+      // Um campo apagado vira string vazia, não null: sem tratamento explícito o
+      // Number('') = 0 passaria batido e zeraria o valor do pedido silenciosamente.
+      const wrapper = await openDetail(makeOrder({ totalValue: 45, totalCost: 18 }))
+
+      await wrapper.get('[data-testid="order-detail-edit-values-button"]').trigger('click')
+      await wrapper.get('[data-testid="order-detail-values-total-value-input"]').setValue('')
+      await wrapper.get('[data-testid="order-detail-values-save-button"]').trigger('click')
+      await flushPromises()
+
+      expect(orderStoreMock.updateValues).not.toHaveBeenCalled()
+      expect(wrapper.get('[data-testid="order-detail-values-error"]').text()).toBe(
+        'Preencha valor total e custo total.',
+      )
+      expect(wrapper.find('[data-testid="order-detail-values-form"]').exists()).toBe(true)
+    })
+
+    it('should show a pt-BR error and keep the form open when saving fails', async () => {
+      const wrapper = await openDetail(makeOrder())
+      orderStoreMock.updateValues.mockRejectedValue(new Error('network'))
+      orderStoreMock.error = 'Erro ao salvar valores do pedido'
+
+      await wrapper.get('[data-testid="order-detail-edit-values-button"]').trigger('click')
+      await wrapper.get('[data-testid="order-detail-values-save-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="order-detail-values-error"]').text()).toBe(
+        'Erro ao salvar valores do pedido',
+      )
+      expect(wrapper.find('[data-testid="order-detail-values-form"]').exists()).toBe(true)
+    })
+
+    it('should show the original-values block and restore action when valuesOverriddenAt is set', async () => {
+      const wrapper = await openDetail(
+        makeOrder({
+          totalValue: 45,
+          totalCost: 18,
+          estimatedProfit: 27,
+          originalTotalValue: 60,
+          originalTotalCost: 34,
+          originalEstimatedProfit: 26,
+          valuesOverriddenAt: '2026-08-20T12:00:00',
+        }),
+      )
+
+      const original = wrapper.get('[data-testid="order-detail-original-values"]')
+      expect(original.text()).toMatch(/60/)
+      expect(original.text()).toMatch(/34/)
+      expect(original.text()).toMatch(/26/)
+      expect(
+        wrapper.find('[data-testid="order-detail-restore-values-button"]').exists(),
+      ).toBe(true)
+    })
+
+    it('should call restoreValues and re-render the cards from the response', async () => {
+      const wrapper = await openDetail(
+        makeOrder({
+          totalValue: 45,
+          totalCost: 18,
+          estimatedProfit: 27,
+          originalTotalValue: 60,
+          originalTotalCost: 34,
+          originalEstimatedProfit: 26,
+          valuesOverriddenAt: '2026-08-20T12:00:00',
+        }),
+      )
+
+      orderStoreMock.restoreValues.mockResolvedValue(
+        makeOrder({
+          totalValue: 60,
+          totalCost: 34,
+          estimatedProfit: 26,
+          originalTotalValue: null,
+          originalTotalCost: null,
+          originalEstimatedProfit: null,
+          valuesOverriddenAt: null,
+        }),
+      )
+
+      await wrapper.get('[data-testid="order-detail-restore-values-button"]').trigger('click')
+      await flushPromises()
+
+      expect(orderStoreMock.restoreValues).toHaveBeenCalledWith('o1')
+      const detail = wrapper.get('[data-testid="order-detail-modal"]')
+      expect(detail.get('[data-testid="order-detail-total-cost"]').text()).toMatch(/34/)
+      expect(detail.get('[data-testid="order-detail-estimated-profit"]').text()).toMatch(/26/)
+      expect(wrapper.find('[data-testid="order-detail-original-values"]').exists()).toBe(false)
     })
   })
 

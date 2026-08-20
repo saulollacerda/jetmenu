@@ -263,4 +263,92 @@ describe('orderStore', () => {
     expect(mockedService.remove).toHaveBeenCalledWith('1')
     expect(store.items).toHaveLength(0)
   })
+
+  it('updateValues should call the service and replace the order in the current page', async () => {
+    const original = {
+      id: '1',
+      dateTime: '2026-03-24T10:00:00',
+      customerId: 'c1',
+      customerName: 'João',
+      status: 'PAID' as const,
+      totalValue: 50.0,
+      estimatedProfit: 20.0,
+      items: [],
+    }
+    const updated = {
+      ...original,
+      totalValue: 45.0,
+      totalCost: 18.0,
+      estimatedProfit: 27.0,
+      originalTotalValue: 50.0,
+      originalTotalCost: 20.0,
+      originalEstimatedProfit: 20.0,
+      valuesOverriddenAt: '2026-08-20T12:00:00',
+    }
+    mockedService.findAll.mockResolvedValue(asPage([original]))
+    mockedService.updateValues.mockResolvedValue(updated)
+
+    const store = useOrderStore()
+    await store.fetchPage({})
+    const result = await store.updateValues('1', { totalValue: 45.0, totalCost: 18.0 })
+
+    expect(mockedService.updateValues).toHaveBeenCalledWith('1', { totalValue: 45.0, totalCost: 18.0 })
+    expect(result).toEqual(updated)
+    expect(store.items).toContainEqual(updated)
+  })
+
+  it('updateValues should surface the backend ProblemDetail message on failure', async () => {
+    mockedService.updateValues.mockRejectedValue({
+      response: { data: { detail: 'Valor total não pode ser negativo' } },
+    })
+
+    const store = useOrderStore()
+    await expect(
+      store.updateValues('1', { totalValue: -1, totalCost: 0 }),
+    ).rejects.toBeTruthy()
+
+    expect(store.error).toBe('Valor total não pode ser negativo')
+  })
+
+  it('restoreValues should call the service and replace the order in the current page', async () => {
+    const overridden = {
+      id: '1',
+      dateTime: '2026-03-24T10:00:00',
+      customerId: 'c1',
+      customerName: 'João',
+      status: 'PAID' as const,
+      totalValue: 45.0,
+      estimatedProfit: 27.0,
+      valuesOverriddenAt: '2026-08-20T12:00:00',
+      items: [],
+    }
+    const restored = {
+      ...overridden,
+      totalValue: 50.0,
+      estimatedProfit: 20.0,
+      originalTotalValue: null,
+      originalTotalCost: null,
+      originalEstimatedProfit: null,
+      valuesOverriddenAt: null,
+    }
+    mockedService.findAll.mockResolvedValue(asPage([overridden]))
+    mockedService.restoreValues.mockResolvedValue(restored)
+
+    const store = useOrderStore()
+    await store.fetchPage({})
+    const result = await store.restoreValues('1')
+
+    expect(mockedService.restoreValues).toHaveBeenCalledWith('1')
+    expect(result).toEqual(restored)
+    expect(store.items).toContainEqual(restored)
+  })
+
+  it('restoreValues should fall back to a generic message when no detail is present', async () => {
+    mockedService.restoreValues.mockRejectedValue(new Error('network'))
+
+    const store = useOrderStore()
+    await expect(store.restoreValues('1')).rejects.toBeTruthy()
+
+    expect(store.error).toBe('Erro ao restaurar valores originais do pedido')
+  })
 })
