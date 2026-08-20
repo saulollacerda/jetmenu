@@ -182,7 +182,14 @@ public class OrderService {
 
         order.setCustomer(customer);
         order.setFee(fee);
-        order.setTotalValue(totalValue);
+        // Uma correção manual do valor final/custo (override, ver updateValues/restoreValues) é
+        // uma afirmação explícita do lojista sobre o que o pedido realmente valeu — editar os
+        // itens depois não pode desfazê-la silenciosamente. Enquanto o override estiver ativo
+        // (valuesOverriddenAt != null), o totalValue recalculado a partir dos itens é
+        // descartado e o valor manual gravado no pedido é preservado.
+        if (order.getValuesOverriddenAt() == null) {
+            order.setTotalValue(totalValue);
+        }
         if (request.getStatus() != null) {
             order.setStatus(request.getStatus());
         }
@@ -201,8 +208,86 @@ public class OrderService {
 
         // Cálculo via service (requer order.items atualizado)
         BigDecimal totalCost = orderCostCalculatorService.computeOrderTotalCost(order);
-        order.setTotalCost(totalCost);
+        // Mesma regra do override acima: custo manual não é sobrescrito pelo recálculo dos itens.
+        if (order.getValuesOverriddenAt() == null) {
+            order.setTotalCost(totalCost);
+        }
         order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
+
+        Order saved = orderRepository.save(order);
+        return toResponse(saved);
+    }
+
+    /**
+     * Correção manual do valor final ({@code totalValue}) e do custo total ({@code totalCost})
+     * do pedido. Na primeira chamada (sem override ativo) tira um snapshot dos valores
+     * calculados pelo sistema antes de aplicar os novos — o snapshot é a referência do que o
+     * pedido "deveria" valer, e nunca é sobrescrito por correções seguintes.
+     */
+    @Transactional
+    public OrderResponse updateValues(UUID merchantId, UUID id, OrderValuesRequest request) {
+        Order order = orderRepository.findByIdAndMerchantId(id, merchantId)
+                .orElseThrow(() -> new OrderNotFoundException(id));
+
+        if (order.getValuesOverriddenAt() == null) {
+            snapshotOriginalValues(order);
+        }
+
+        order.setTotalValue(request.getTotalValue());
+        order.setTotalCost(request.getTotalCost());
+        order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
+
+        Order saved = orderRepository.save(order);
+        return toResponse(saved);
+    }
+
+    /**
+     * Grava em {@code originalTotalValue}/{@code originalTotalCost}/{@code originalEstimatedProfit}
+     * os valores efetivos do pedido ANTES da primeira correção manual, resolvendo
+     * {@code totalCost} da mesma forma que {@link #toResponse}: usa o valor persistido, ou o
+     * fallback legado ({@code OrderCalculations.calculateTotalCost(items) + orderFichaCost})
+     * quando ele é nulo — assim um pedido legado também ganha um baseline com sentido.
+     */
+    private void snapshotOriginalValues(Order order) {
+        List<OrderItem> items = order.getItems() != null ? order.getItems() : List.of();
+        BigDecimal orderFichaCost = orderCostCalculatorService.computeOrderFichaCost(order);
+        if (orderFichaCost == null) orderFichaCost = BigDecimal.ZERO;
+        BigDecimal resolvedTotalCost = order.getTotalCost() != null
+                ? order.getTotalCost()
+                : OrderCalculations.calculateTotalCost(items).add(orderFichaCost);
+
+        Fee fee = order.getFee();
+        BigDecimal resolvedEstimatedProfit = OrderCalculations.calculateEstimatedProfit(
+                order.getTotalValue(), order.getDeliveryFee(), order.getServiceFee(), resolvedTotalCost,
+                fee != null ? fee.getFeeRate() : null);
+
+        order.setOriginalTotalValue(order.getTotalValue());
+        order.setOriginalTotalCost(resolvedTotalCost);
+        order.setOriginalEstimatedProfit(resolvedEstimatedProfit);
+        order.setValuesOverriddenAt(LocalDateTime.now(BRAZIL_ZONE));
+    }
+
+    /**
+     * Restaura {@code totalValue}/{@code totalCost} do snapshot original e apaga a correção
+     * manual. Pedido nunca corrigido manualmente ({@code valuesOverriddenAt == null}) é um
+     * no-op: nada é gravado.
+     */
+    @Transactional
+    public OrderResponse restoreValues(UUID merchantId, UUID id) {
+        Order order = orderRepository.findByIdAndMerchantId(id, merchantId)
+                .orElseThrow(() -> new OrderNotFoundException(id));
+
+        if (order.getValuesOverriddenAt() == null) {
+            return toResponse(order);
+        }
+
+        order.setTotalValue(order.getOriginalTotalValue());
+        order.setTotalCost(order.getOriginalTotalCost());
+        order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
+        order.setOriginalTotalValue(null);
+        order.setOriginalTotalCost(null);
+        order.setOriginalEstimatedProfit(null);
+        order.setValuesOverriddenAt(null);
 
         Order saved = orderRepository.save(order);
         return toResponse(saved);
@@ -469,6 +554,12 @@ public class OrderService {
                 .pickupCode(order.getPickupCode())
                 .takeoutMode(order.getTakeoutMode())
                 .takeoutDateTime(order.getTakeoutDateTime())
+                // Snapshot da correção manual de totalValue/totalCost. Nulos em todo pedido
+                // que nunca foi corrigido manualmente pelo lojista.
+                .originalTotalValue(order.getOriginalTotalValue())
+                .originalTotalCost(order.getOriginalTotalCost())
+                .originalEstimatedProfit(order.getOriginalEstimatedProfit())
+                .valuesOverriddenAt(order.getValuesOverriddenAt())
                 .build();
     }
 

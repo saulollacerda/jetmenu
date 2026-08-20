@@ -1571,6 +1571,37 @@ class OrderServiceTest {
 
             then(orderRepository).should(never()).save(any(Order.class));
         }
+
+        @Test
+        @DisplayName("NÃO deve sobrescrever totalValue/totalCost manuais quando o pedido tem override ativo")
+        void shouldNotClobberManualValuesWhenOverrideActive() {
+            // Correção manual já aplicada: totalValue/totalCost divergem do que os itens dariam.
+            order.setTotalValue(new BigDecimal("50.00"));
+            order.setTotalCost(new BigDecimal("15.00"));
+            order.setOriginalTotalValue(new BigDecimal("60.00"));
+            order.setOriginalTotalCost(new BigDecimal("24.00"));
+            order.setOriginalEstimatedProfit(new BigDecimal("36.00"));
+            order.setValuesOverriddenAt(LocalDateTime.now(BRAZIL_ZONE));
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(orderRepository.save(any(Order.class))).willReturn(order);
+
+            orderService.update(merchantId, orderId, orderRequest);
+
+            ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            Order saved = captor.getValue();
+            // Itens do request valeriam 60.00 (2 × 30.00) — mas o valor manual (50.00/15.00) prevalece.
+            assertThat(saved.getTotalValue()).isEqualByComparingTo("50.00");
+            assertThat(saved.getTotalCost()).isEqualByComparingTo("15.00");
+            // Lucro é recalculado a partir dos valores manuais preservados: 50.00 − 15.00 = 35.00.
+            assertThat(saved.getEstimatedProfit()).isEqualByComparingTo("35.00");
+            // Snapshot original não é tocado por uma simples edição de itens.
+            assertThat(saved.getOriginalTotalValue()).isEqualByComparingTo("60.00");
+            assertThat(saved.getOriginalTotalCost()).isEqualByComparingTo("24.00");
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -1601,6 +1632,218 @@ class OrderServiceTest {
                     .isInstanceOf(OrderNotFoundException.class);
 
             then(orderRepository).should(never()).deleteByIdAndMerchantId(any(), any());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // updateValues() — correção manual de totalValue/totalCost
+    // -------------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("updateValues()")
+    class UpdateValues {
+
+        @Test
+        @DisplayName("primeira correção tira snapshot dos valores calculados e aplica os novos valores")
+        void shouldSnapshotOriginalValuesOnFirstOverride() {
+            order.setTotalValue(new BigDecimal("60.00"));
+            order.setTotalCost(new BigDecimal("24.00"));
+
+            OrderValuesRequest request = OrderValuesRequest.builder()
+                    .totalValue(new BigDecimal("50.00"))
+                    .totalCost(new BigDecimal("20.00"))
+                    .build();
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            OrderResponse result = orderService.updateValues(merchantId, orderId, request);
+
+            ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            Order saved = captor.getValue();
+
+            assertThat(saved.getOriginalTotalValue()).isEqualByComparingTo("60.00");
+            assertThat(saved.getOriginalTotalCost()).isEqualByComparingTo("24.00");
+            assertThat(saved.getOriginalEstimatedProfit()).isEqualByComparingTo("36.00");
+            assertThat(saved.getValuesOverriddenAt()).isNotNull();
+
+            assertThat(saved.getTotalValue()).isEqualByComparingTo("50.00");
+            assertThat(saved.getTotalCost()).isEqualByComparingTo("20.00");
+            assertThat(saved.getEstimatedProfit()).isEqualByComparingTo("30.00");
+
+            assertThat(result.getOriginalTotalValue()).isEqualByComparingTo("60.00");
+            assertThat(result.getValuesOverriddenAt()).isNotNull();
+        }
+
+        @Test
+        @DisplayName("segunda correção mantém o snapshot original intacto")
+        void shouldKeepOriginalSnapshotOnSecondOverride() {
+            LocalDateTime firstOverrideAt = LocalDateTime.now(BRAZIL_ZONE).minusHours(2);
+            order.setTotalValue(new BigDecimal("50.00"));
+            order.setTotalCost(new BigDecimal("20.00"));
+            order.setOriginalTotalValue(new BigDecimal("60.00"));
+            order.setOriginalTotalCost(new BigDecimal("24.00"));
+            order.setOriginalEstimatedProfit(new BigDecimal("36.00"));
+            order.setValuesOverriddenAt(firstOverrideAt);
+
+            OrderValuesRequest request = OrderValuesRequest.builder()
+                    .totalValue(new BigDecimal("40.00"))
+                    .totalCost(new BigDecimal("15.00"))
+                    .build();
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.updateValues(merchantId, orderId, request);
+
+            ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            Order saved = captor.getValue();
+
+            // Snapshot é o da PRIMEIRA correção, não recalculado a partir do estado atual.
+            assertThat(saved.getOriginalTotalValue()).isEqualByComparingTo("60.00");
+            assertThat(saved.getOriginalTotalCost()).isEqualByComparingTo("24.00");
+            assertThat(saved.getOriginalEstimatedProfit()).isEqualByComparingTo("36.00");
+            assertThat(saved.getValuesOverriddenAt()).isEqualTo(firstOverrideAt);
+
+            assertThat(saved.getTotalValue()).isEqualByComparingTo("40.00");
+            assertThat(saved.getTotalCost()).isEqualByComparingTo("15.00");
+            assertThat(saved.getEstimatedProfit()).isEqualByComparingTo("25.00");
+        }
+
+        @Test
+        @DisplayName("lucro recalculado deduz frete, taxa de serviço e taxa de meio de pagamento")
+        void shouldRecalculateProfitDeductingDeliveryServiceAndFeeRate() {
+            Fee fee = Fee.builder().id(UUID.randomUUID()).name("Cartão").feeRate(new BigDecimal("10.00")).build();
+            order.setDeliveryFee(new BigDecimal("10.00"));
+            order.setFee(fee);
+            order.setTotalValue(new BigDecimal("60.00"));
+            order.setTotalCost(new BigDecimal("24.00"));
+
+            OrderValuesRequest request = OrderValuesRequest.builder()
+                    .totalValue(new BigDecimal("110.00"))
+                    .totalCost(new BigDecimal("20.00"))
+                    .build();
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.updateValues(merchantId, orderId, request);
+
+            ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            Order saved = captor.getValue();
+
+            // subtotal = 110.00 − 10.00 (frete) = 100.00; taxa = 100.00 × 10% = 10.00
+            // lucro = 100.00 − 20.00 (custo) − 10.00 (taxa) = 70.00
+            assertThat(saved.getEstimatedProfit()).isEqualByComparingTo("70.00");
+        }
+
+        @Test
+        @DisplayName("pedido legado com totalCost nulo ainda tira snapshot de um custo resolvido")
+        void shouldSnapshotResolvedTotalCostForLegacyOrderWithNullTotalCost() {
+            // order.totalCost é null; fallback = OrderCalculations.calculateTotalCost(items) + ficha.
+            // items: 1 item, unitCost 12.00 × quantidade 2 = 24.00.
+            order.setTotalCost(null);
+            given(orderCostCalculatorService.computeOrderFichaCost(any(Order.class)))
+                    .willReturn(new BigDecimal("3.00"));
+
+            OrderValuesRequest request = OrderValuesRequest.builder()
+                    .totalValue(new BigDecimal("50.00"))
+                    .totalCost(new BigDecimal("20.00"))
+                    .build();
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.updateValues(merchantId, orderId, request);
+
+            ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            Order saved = captor.getValue();
+
+            // 24.00 (itens) + 3.00 (ficha do pedido)
+            assertThat(saved.getOriginalTotalCost()).isEqualByComparingTo("27.00");
+        }
+
+        @Test
+        @DisplayName("deve lançar OrderNotFoundException quando o pedido é de outro lojista")
+        void shouldThrowWhenOrderBelongsToAnotherMerchant() {
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.empty());
+
+            OrderValuesRequest request = OrderValuesRequest.builder()
+                    .totalValue(new BigDecimal("50.00"))
+                    .totalCost(new BigDecimal("20.00"))
+                    .build();
+
+            assertThatThrownBy(() -> orderService.updateValues(merchantId, orderId, request))
+                    .isInstanceOf(OrderNotFoundException.class);
+
+            then(orderRepository).should(never()).save(any(Order.class));
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // restoreValues() — restaura o snapshot original e apaga a correção manual
+    // -------------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("restoreValues()")
+    class RestoreValues {
+
+        @Test
+        @DisplayName("devolve os valores originais e limpa o snapshot")
+        void shouldRestoreOriginalValuesAndClearSnapshot() {
+            order.setTotalValue(new BigDecimal("50.00"));
+            order.setTotalCost(new BigDecimal("20.00"));
+            order.setOriginalTotalValue(new BigDecimal("60.00"));
+            order.setOriginalTotalCost(new BigDecimal("24.00"));
+            order.setOriginalEstimatedProfit(new BigDecimal("36.00"));
+            order.setValuesOverriddenAt(LocalDateTime.now(BRAZIL_ZONE));
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            OrderResponse result = orderService.restoreValues(merchantId, orderId);
+
+            ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
+            then(orderRepository).should().save(captor.capture());
+            Order saved = captor.getValue();
+
+            assertThat(saved.getTotalValue()).isEqualByComparingTo("60.00");
+            assertThat(saved.getTotalCost()).isEqualByComparingTo("24.00");
+            assertThat(saved.getEstimatedProfit()).isEqualByComparingTo("36.00");
+            assertThat(saved.getOriginalTotalValue()).isNull();
+            assertThat(saved.getOriginalTotalCost()).isNull();
+            assertThat(saved.getOriginalEstimatedProfit()).isNull();
+            assertThat(saved.getValuesOverriddenAt()).isNull();
+
+            assertThat(result.getTotalValue()).isEqualByComparingTo("60.00");
+            assertThat(result.getValuesOverriddenAt()).isNull();
+        }
+
+        @Test
+        @DisplayName("pedido nunca corrigido manualmente: no-op, não grava nada")
+        void shouldBeNoOpWhenOrderWasNeverOverridden() {
+            order.setValuesOverriddenAt(null);
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.restoreValues(merchantId, orderId);
+
+            assertThat(result.getTotalValue()).isEqualByComparingTo(order.getTotalValue());
+            then(orderRepository).should(never()).save(any(Order.class));
+        }
+
+        @Test
+        @DisplayName("deve lançar OrderNotFoundException quando o pedido é de outro lojista")
+        void shouldThrowWhenOrderBelongsToAnotherMerchant() {
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> orderService.restoreValues(merchantId, orderId))
+                    .isInstanceOf(OrderNotFoundException.class);
+
+            then(orderRepository).should(never()).save(any(Order.class));
         }
     }
 

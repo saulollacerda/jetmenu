@@ -137,7 +137,14 @@ public class OrderIngredientBackfillService {
         }
 
         if (changed) {
-            order.setTotalCost(costCalculatorService.computeOrderTotalCost(order));
+            // Mesma regra de OrderService.update(): uma correção manual do custo
+            // (valuesOverriddenAt != null) é uma afirmação explícita do lojista e não pode ser
+            // desfeita por um recálculo automático. Sem esta guarda o pedido acabaria exibindo
+            // "Ajustado manualmente" com um custo que o lojista nunca digitou. O extra continua
+            // sendo adicionado ao item; só o custo do pedido é preservado.
+            if (order.getValuesOverriddenAt() == null) {
+                order.setTotalCost(costCalculatorService.computeOrderTotalCost(order));
+            }
             order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
             orderRepository.save(order);
         }

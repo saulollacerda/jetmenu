@@ -497,5 +497,164 @@ class OrderControllerTest {
                     .andExpect(status().isNotFound());
         }
     }
+
+    // -------------------------------------------------------------------------
+    // PATCH /api/orders/{id}/values
+    // -------------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("PATCH /api/orders/{id}/values")
+    class UpdateOrderValues {
+
+        private OrderValuesRequest buildValidValuesRequest() {
+            return OrderValuesRequest.builder()
+                    .totalValue(new BigDecimal("50.00"))
+                    .totalCost(new BigDecimal("20.00"))
+                    .build();
+        }
+
+        @Test
+        @DisplayName("deve retornar 200 com OrderResponse atualizado")
+        void shouldReturn200WithUpdatedResponse() throws Exception {
+            OrderResponse overridden = OrderResponse.builder()
+                    .id(orderId)
+                    .dateTime(orderResponse.getDateTime())
+                    .customerId(customerId)
+                    .customerName(orderResponse.getCustomerName())
+                    .status(OrderStatus.PAID)
+                    .totalValue(new BigDecimal("50.00"))
+                    .estimatedProfit(new BigDecimal("30.00"))
+                    .items(orderResponse.getItems())
+                    .originalTotalValue(new BigDecimal("60.00"))
+                    .originalTotalCost(new BigDecimal("24.00"))
+                    .originalEstimatedProfit(new BigDecimal("36.00"))
+                    .valuesOverriddenAt(LocalDateTime.now())
+                    .build();
+            given(orderService.updateValues(any(), eq(orderId), any(OrderValuesRequest.class)))
+                    .willReturn(overridden);
+
+            mockMvc.perform(patch("/api/orders/{id}/values", orderId)
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(buildValidValuesRequest())))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(orderId.toString()))
+                    .andExpect(jsonPath("$.totalValue").value(50.00))
+                    .andExpect(jsonPath("$.originalTotalValue").value(60.00))
+                    .andExpect(jsonPath("$.originalTotalCost").value(24.00))
+                    .andExpect(jsonPath("$.originalEstimatedProfit").value(36.00))
+                    .andExpect(jsonPath("$.valuesOverriddenAt").exists());
+        }
+
+        @Test
+        @DisplayName("deve retornar 404 quando pedido não encontrado")
+        void shouldReturn404WhenOrderNotFound() throws Exception {
+            given(orderService.updateValues(any(), eq(orderId), any(OrderValuesRequest.class)))
+                    .willThrow(new OrderNotFoundException(orderId));
+
+            mockMvc.perform(patch("/api/orders/{id}/values", orderId)
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(buildValidValuesRequest())))
+                    .andExpect(status().isNotFound());
+        }
+
+        @Test
+        @DisplayName("deve retornar 400 quando totalValue é nulo")
+        void shouldReturn400WhenTotalValueIsNull() throws Exception {
+            OrderValuesRequest invalid = OrderValuesRequest.builder()
+                    .totalCost(new BigDecimal("20.00"))
+                    .build();
+
+            mockMvc.perform(patch("/api/orders/{id}/values", orderId)
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(invalid)))
+                    .andExpect(status().isBadRequest());
+
+            then(orderService).should(never()).updateValues(any(), any(), any(OrderValuesRequest.class));
+        }
+
+        @Test
+        @DisplayName("deve retornar 400 quando totalCost é nulo")
+        void shouldReturn400WhenTotalCostIsNull() throws Exception {
+            OrderValuesRequest invalid = OrderValuesRequest.builder()
+                    .totalValue(new BigDecimal("50.00"))
+                    .build();
+
+            mockMvc.perform(patch("/api/orders/{id}/values", orderId)
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(invalid)))
+                    .andExpect(status().isBadRequest());
+
+            then(orderService).should(never()).updateValues(any(), any(), any(OrderValuesRequest.class));
+        }
+
+        @Test
+        @DisplayName("deve retornar 400 quando totalValue é negativo")
+        void shouldReturn400WhenTotalValueIsNegative() throws Exception {
+            OrderValuesRequest invalid = OrderValuesRequest.builder()
+                    .totalValue(new BigDecimal("-1.00"))
+                    .totalCost(new BigDecimal("20.00"))
+                    .build();
+
+            mockMvc.perform(patch("/api/orders/{id}/values", orderId)
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(invalid)))
+                    .andExpect(status().isBadRequest());
+
+            then(orderService).should(never()).updateValues(any(), any(), any(OrderValuesRequest.class));
+        }
+
+        @Test
+        @DisplayName("deve retornar 400 quando totalCost é negativo")
+        void shouldReturn400WhenTotalCostIsNegative() throws Exception {
+            OrderValuesRequest invalid = OrderValuesRequest.builder()
+                    .totalValue(new BigDecimal("50.00"))
+                    .totalCost(new BigDecimal("-1.00"))
+                    .build();
+
+            mockMvc.perform(patch("/api/orders/{id}/values", orderId)
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(invalid)))
+                    .andExpect(status().isBadRequest());
+
+            then(orderService).should(never()).updateValues(any(), any(), any(OrderValuesRequest.class));
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // DELETE /api/orders/{id}/values
+    // -------------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("DELETE /api/orders/{id}/values")
+    class RestoreOrderValues {
+
+        @Test
+        @DisplayName("deve retornar 200 com OrderResponse restaurado")
+        void shouldReturn200WithRestoredResponse() throws Exception {
+            given(orderService.restoreValues(any(), eq(orderId))).willReturn(orderResponse);
+
+            mockMvc.perform(delete("/api/orders/{id}/values", orderId)
+                            .with(csrf()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(orderId.toString()));
+        }
+
+        @Test
+        @DisplayName("deve retornar 404 quando pedido não encontrado")
+        void shouldReturn404WhenOrderNotFound() throws Exception {
+            given(orderService.restoreValues(any(), eq(orderId)))
+                    .willThrow(new OrderNotFoundException(orderId));
+
+            mockMvc.perform(delete("/api/orders/{id}/values", orderId)
+                            .with(csrf()))
+                    .andExpect(status().isNotFound());
+        }
+    }
 }
 

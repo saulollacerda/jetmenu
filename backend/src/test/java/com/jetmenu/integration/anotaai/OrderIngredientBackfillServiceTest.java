@@ -307,13 +307,14 @@ class OrderIngredientBackfillServiceTest {
                     .willReturn(List.of(order));
             given(anotaAIClient.getOrderDetail(API_KEY, "ext-order-123"))
                     .willReturn(raw(buildDetailResponse(EXTERNAL_PRODUCT_ID, "Açaí Zero", 1)));
-            given(costCalculatorService.computeOrderTotalCost(order))
-                    .willReturn(new BigDecimal("15.00"));
         }
 
         @Test
         @DisplayName("deve criar OrderItemExtraIngredient com quantidade = defaultQuantity × subItem.quantity")
         void whenSubItemMatchesIngredient_shouldAddExtraAndSave() {
+            given(costCalculatorService.computeOrderTotalCost(order))
+                    .willReturn(new BigDecimal("15.00"));
+
             backfillService.onIngredientCreated(event);
 
             assertThat(item.getExtraIngredients()).hasSize(1);
@@ -347,6 +348,31 @@ class OrderIngredientBackfillServiceTest {
             backfillService.onIngredientCreated(event);
 
             assertThat(order.getEstimatedProfit()).isEqualByComparingTo(new BigDecimal("5.00"));
+        }
+
+        @Test
+        @DisplayName("não deve sobrescrever o custo corrigido manualmente pelo lojista")
+        void whenOrderHasManualOverride_shouldNotOverwriteTotalCost() {
+            // O lojista corrigiu o custo à mão (override ativo). O backfill continua
+            // adicionando o extra, mas o custo manual é a palavra final: sobrescrevê-lo
+            // deixaria o pedido dizendo "Ajustado manualmente" com um valor que o lojista
+            // nunca digitou — e com o snapshot original apontando para outro número ainda.
+            order.setTotalCost(new BigDecimal("9.00"));
+            order.setOriginalTotalValue(new BigDecimal("25.00"));
+            order.setOriginalTotalCost(new BigDecimal("15.00"));
+            order.setOriginalEstimatedProfit(new BigDecimal("10.00"));
+            order.setValuesOverriddenAt(LocalDateTime.now().minusHours(1));
+
+            backfillService.onIngredientCreated(event);
+
+            // O extra entra normalmente — só o custo é preservado.
+            assertThat(item.getExtraIngredients()).hasSize(1);
+            assertThat(order.getTotalCost()).isEqualByComparingTo(new BigDecimal("9.00"));
+            verify(costCalculatorService, never()).computeOrderTotalCost(order);
+            // Lucro recalculado a partir do custo manual: 25 − 0 − 9 = 16.
+            assertThat(order.getEstimatedProfit()).isEqualByComparingTo(new BigDecimal("16.00"));
+            // O snapshot original permanece intacto.
+            assertThat(order.getOriginalTotalCost()).isEqualByComparingTo(new BigDecimal("15.00"));
         }
     }
 

@@ -7,6 +7,7 @@ vi.mock('@/services/api', () => ({
     get: vi.fn(),
     post: vi.fn(),
     put: vi.fn(),
+    patch: vi.fn(),
     delete: vi.fn(),
   },
 }))
@@ -102,5 +103,54 @@ describe('orderService', () => {
     await orderService.remove('1')
 
     expect(api.delete).toHaveBeenCalledWith('/orders/1')
+  })
+
+  it('updateValues should PATCH /orders/:id/values with the override request', async () => {
+    const request = { totalValue: 45.5, totalCost: 18.0 }
+    const mockData = {
+      id: '1',
+      dateTime: '2026-03-24T10:00:00',
+      customerId: 'c1',
+      customerName: 'João',
+      status: 'PAID',
+      totalValue: 45.5,
+      totalCost: 18.0,
+      estimatedProfit: 27.5,
+      originalTotalValue: 50.0,
+      originalTotalCost: 20.0,
+      originalEstimatedProfit: 30.0,
+      valuesOverriddenAt: '2026-08-20T12:00:00',
+      items: [],
+    }
+    vi.mocked(api.patch).mockResolvedValue({ data: mockData })
+
+    const result = await orderService.updateValues('1', request)
+
+    expect(api.patch).toHaveBeenCalledWith('/orders/1/values', request)
+    expect(result).toEqual(mockData)
+  })
+
+  it('restoreValues should DELETE /orders/:id/values', async () => {
+    const mockData = {
+      id: '1',
+      dateTime: '2026-03-24T10:00:00',
+      customerId: 'c1',
+      customerName: 'João',
+      status: 'PAID',
+      totalValue: 50.0,
+      totalCost: 20.0,
+      estimatedProfit: 30.0,
+      originalTotalValue: null,
+      originalTotalCost: null,
+      originalEstimatedProfit: null,
+      valuesOverriddenAt: null,
+      items: [],
+    }
+    vi.mocked(api.delete).mockResolvedValue({ data: mockData })
+
+    const result = await orderService.restoreValues('1')
+
+    expect(api.delete).toHaveBeenCalledWith('/orders/1/values')
+    expect(result).toEqual(mockData)
   })
 })

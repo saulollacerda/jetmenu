@@ -1,5 +1,5 @@
 import api from './api'
-import type { OrderRequest, OrderResponse } from '@/types/Order'
+import type { OrderRequest, OrderResponse, OrderValuesRequest } from '@/types/Order'
 import type { Page, PageParams } from '@/types/Page'
 import { DEFAULT_PAGE_SIZE } from '@/types/Page'
 
@@ -36,5 +36,15 @@ export const orderService = {
 
   async remove(id: string): Promise<void> {
     await api.delete(`/orders/${id}`)
+  },
+
+  async updateValues(id: string, request: OrderValuesRequest): Promise<OrderResponse> {
+    const { data } = await api.patch<OrderResponse>(`/orders/${id}/values`, request)
+    return data
+  },
+
+  async restoreValues(id: string): Promise<OrderResponse> {
+    const { data } = await api.delete<OrderResponse>(`/orders/${id}/values`)
+    return data
   },
 }

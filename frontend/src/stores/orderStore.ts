@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { OrderRequest, OrderResponse } from '@/types/Order'
+import type { OrderRequest, OrderResponse, OrderValuesRequest } from '@/types/Order'
 import { DEFAULT_PAGE_SIZE } from '@/types/Page'
 import { orderService, type OrderFilterParams } from '@/services/orderService'
 import { useDashboardStore } from '@/stores/dashboardStore'
@@ -169,6 +169,40 @@ export const useOrderStore = defineStore('order', () => {
     }
   }
 
+  async function updateValues(id: string, request: OrderValuesRequest) {
+    loading.value = true
+    error.value = null
+    try {
+      const updated = await orderService.updateValues(id, request)
+      const index = items.value.findIndex((item) => item.id === id)
+      if (index !== -1) items.value[index] = updated
+      refreshDashboard()
+      return updated
+    } catch (e: unknown) {
+      error.value = extractDetail(e) ?? 'Erro ao atualizar valores do pedido'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function restoreValues(id: string) {
+    loading.value = true
+    error.value = null
+    try {
+      const restored = await orderService.restoreValues(id)
+      const index = items.value.findIndex((item) => item.id === id)
+      if (index !== -1) items.value[index] = restored
+      refreshDashboard()
+      return restored
+    } catch (e: unknown) {
+      error.value = extractDetail(e) ?? 'Erro ao restaurar valores originais do pedido'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function findById(id: string): Promise<OrderResponse> {
     try {
       return await orderService.findById(id)
@@ -194,6 +228,8 @@ export const useOrderStore = defineStore('order', () => {
     create,
     update,
     remove,
+    updateValues,
+    restoreValues,
     findById,
   }
 })
