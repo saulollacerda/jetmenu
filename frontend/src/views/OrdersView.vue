@@ -33,6 +33,7 @@ import type {
   OrderItemExtraIngredientResponse,
   OrderItemUnmatchedSubItemResponse,
   OrderOrigin,
+  OrderValuesRequest,
 } from '@/types/Order'
 import type { IngredientRequest } from '@/types/Ingredient'
 import type { IncludeResponse } from '@/types/Product'
@@ -636,6 +637,7 @@ async function viewDetail(o: OrderResponse) {
   const token = ++detailRequestToken
   showDetailModal.value = true
   cancelCreateIngredient()
+  cancelEditValues()
   // The list row is already a complete OrderResponse: render it at once and let
   // the fetched detail replace it, so switching orders never flashes a spinner.
   selectedOrder.value = o
@@ -686,6 +688,91 @@ function closeDetail() {
   showDetailModal.value = false
   selectedOrder.value = null
   cancelCreateIngredient()
+  cancelEditValues()
+}
+
+// --- Sobrescrita manual de valor total e custo do pedido ------------------
+const editingValues = ref(false)
+const savingValues = ref(false)
+const restoringValues = ref(false)
+const valuesError = ref<string | null>(null)
+// `v-model.number` mantém a string original quando ela não é um número (campo apagado,
+// "12abc"), então o formulário precisa aceitar string — quem lê usa parseCurrencyInput.
+const valuesForm = ref<{
+  totalValue: number | string | null
+  totalCost: number | string | null
+}>({
+  totalValue: null,
+  totalCost: null,
+})
+
+/**
+ * Converte o conteúdo de um campo de moeda em número, ou `null` quando o campo não tem
+ * um número utilizável. Trata explicitamente a string vazia (campo apagado), que o
+ * `v-model.number` deixa passar como `''` e que `Number('')` converteria para 0.
+ */
+function parseCurrencyInput(raw: number | string | null | undefined): number | null {
+  if (raw == null) return null
+  if (typeof raw === 'string' && raw.trim() === '') return null
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function startEditValues() {
+  if (!selectedOrder.value) return
+  editingValues.value = true
+  valuesError.value = null
+  valuesForm.value = {
+    totalValue: Number(selectedOrder.value.totalValue),
+    totalCost: Number(selectedOrder.value.totalCost ?? orderTotalCost(selectedOrder.value)),
+  }
+}
+
+function cancelEditValues() {
+  editingValues.value = false
+  valuesError.value = null
+}
+
+async function submitEditValues() {
+  if (!selectedOrder.value) return
+  // `v-model.number` devolve a string vazia (não null) quando o campo é apagado, e
+  // Number('') é 0 — sem tratar isso, apagar um campo zeraria o pedido em silêncio.
+  const totalValue = parseCurrencyInput(valuesForm.value.totalValue)
+  const totalCost = parseCurrencyInput(valuesForm.value.totalCost)
+  if (totalValue == null || totalCost == null) {
+    valuesError.value = 'Preencha valor total e custo total.'
+    return
+  }
+  if (totalValue < 0 || totalCost < 0) {
+    valuesError.value = 'Valor total e custo total não podem ser negativos.'
+    return
+  }
+  const request: OrderValuesRequest = { totalValue, totalCost }
+  savingValues.value = true
+  try {
+    const updated = await orderStore.updateValues(selectedOrder.value.id, request)
+    selectedOrder.value = updated
+    editingValues.value = false
+    valuesError.value = null
+  } catch {
+    valuesError.value = orderStore.error ?? 'Erro ao salvar valores do pedido'
+  } finally {
+    savingValues.value = false
+  }
+}
+
+async function restoreOriginalValues() {
+  if (!selectedOrder.value) return
+  restoringValues.value = true
+  valuesError.value = null
+  try {
+    const restored = await orderStore.restoreValues(selectedOrder.value.id)
+    selectedOrder.value = restored
+  } catch {
+    valuesError.value = orderStore.error ?? 'Erro ao restaurar valores originais do pedido'
+  } finally {
+    restoringValues.value = false
+  }
 }
 
 // --- Cadastro de ingrediente faltante (subItem não-casado) ---------------
@@ -1860,6 +1947,97 @@ usePolling(() => { orderStore.fetchPage({}, true).catch(() => {}) }, REFRESH_INT
               {{ orderMarginDetailLabel(selectedOrder) }}
             </span>
           </div>
+        </div>
+
+        <!-- Sobrescrita manual de valor total e custo do pedido -->
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+          <UIBtn
+            v-if="!editingValues"
+            variant="secondary"
+            size="sm"
+            icon="edit"
+            data-testid="order-detail-edit-values-button"
+            @click="startEditValues"
+          >
+            Editar valores
+          </UIBtn>
+        </div>
+
+        <div
+          v-if="editingValues"
+          data-testid="order-detail-values-form"
+          :style="{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'flex-end',
+            gap: '8px',
+            padding: '10px',
+            background: UI.bg,
+            borderRadius: '10px',
+          }"
+        >
+          <UIField label="Valor total" :width="140">
+            <UIInput
+              v-model.number="valuesForm.totalValue"
+              type="number"
+              data-testid="order-detail-values-total-value-input"
+            />
+          </UIField>
+          <UIField label="Custo total" :width="140">
+            <UIInput
+              v-model.number="valuesForm.totalCost"
+              type="number"
+              data-testid="order-detail-values-total-cost-input"
+            />
+          </UIField>
+          <UIBtn
+            variant="primary"
+            size="sm"
+            :disabled="savingValues"
+            data-testid="order-detail-values-save-button"
+            @click="submitEditValues"
+          >
+            Salvar
+          </UIBtn>
+          <UIBtn
+            variant="secondary"
+            size="sm"
+            data-testid="order-detail-values-cancel-button"
+            @click="cancelEditValues"
+          >
+            Cancelar
+          </UIBtn>
+        </div>
+
+        <!-- Baseline: valores calculados pelo sistema antes da primeira edição manual -->
+        <div
+          v-if="selectedOrder.valuesOverriddenAt"
+          data-testid="order-detail-original-values"
+          :style="{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }"
+        >
+          <UIPill color="amber" size="sm" dot>Ajustado manualmente</UIPill>
+          <span :style="{ fontSize: '11px', color: UI.textMute }">
+            Valores originais: {{ brl(Number(selectedOrder.originalTotalValue)) }} · custo
+            {{ brl(Number(selectedOrder.originalTotalCost)) }} · lucro
+            {{ brl(Number(selectedOrder.originalEstimatedProfit)) }}
+          </span>
+          <UIBtn
+            variant="secondary"
+            size="sm"
+            :disabled="restoringValues"
+            data-testid="order-detail-restore-values-button"
+            @click="restoreOriginalValues"
+          >
+            Restaurar valores originais
+          </UIBtn>
+        </div>
+
+        <div
+          v-if="valuesError"
+          data-testid="order-detail-values-error"
+          :style="{ fontSize: '11px', color: UI.rose }"
+        >
+          {{ valuesError }}
         </div>
 
         <div v-if="selectedOrder.deliveryFee && Number(selectedOrder.deliveryFee) > 0">

@@ -186,5 +186,32 @@ public class Order {
     @ToString.Exclude
     @EqualsAndHashCode.Exclude
     private List<OrderFichaIngredient> orderFicha;
+
+    // ------------------------------------------------------------------------------------
+    // Correção manual do valor final/custo do pedido. O lojista pode sobrescrever
+    // totalValue/totalCost para registrar a realidade (desconto dado por telefone, insumo
+    // perdido, reembolso ao entregador) que o cálculo automático a partir dos itens não
+    // tem como prever. Antes da primeira correção, os valores calculados pelo sistema são
+    // preservados aqui — a correção manual nunca é destrutiva.
+    // ------------------------------------------------------------------------------------
+
+    /**
+     * Snapshot de {@code totalValue}, {@code totalCost} e {@code estimatedProfit} calculados
+     * pelo sistema, tirado uma única vez na primeira correção manual. Correções manuais
+     * seguintes não sobrescrevem o snapshot — ele guarda sempre o valor original de verdade.
+     * Nulos em todo pedido nunca corrigido manualmente.
+     */
+    @Column(name = "original_total_value", precision = 19, scale = 4)
+    private BigDecimal originalTotalValue;
+
+    @Column(name = "original_total_cost", precision = 19, scale = 4)
+    private BigDecimal originalTotalCost;
+
+    @Column(name = "original_estimated_profit", precision = 19, scale = 4)
+    private BigDecimal originalEstimatedProfit;
+
+    /** Momento da primeira correção manual do valor final/custo. Nulo enquanto não houver override. */
+    @Column(name = "values_overridden_at")
+    private LocalDateTime valuesOverriddenAt;
 }
 

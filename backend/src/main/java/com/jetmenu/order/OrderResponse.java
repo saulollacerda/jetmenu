@@ -90,5 +90,22 @@ public class OrderResponse {
     private String takeoutMode;
 
     private LocalDateTime takeoutDateTime;
+
+    // ------------------------------------------------------------------------------------
+    // Snapshot da correção manual do valor final/custo do pedido. Nulos em todo pedido que
+    // nunca foi corrigido manualmente pelo lojista.
+    // ------------------------------------------------------------------------------------
+
+    /** {@code totalValue} calculado pelo sistema antes da primeira correção manual. */
+    private BigDecimal originalTotalValue;
+
+    /** {@code totalCost} calculado pelo sistema antes da primeira correção manual. */
+    private BigDecimal originalTotalCost;
+
+    /** {@code estimatedProfit} calculado pelo sistema antes da primeira correção manual. */
+    private BigDecimal originalEstimatedProfit;
+
+    /** Momento da primeira correção manual do valor final/custo. */
+    private LocalDateTime valuesOverriddenAt;
 }
 

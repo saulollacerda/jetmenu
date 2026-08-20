@@ -78,4 +78,26 @@ public class OrderController {
         orderService.delete(merchantId, id);
         return ResponseEntity.noContent().build();
     }
+
+    /**
+     * Correção manual do valor final e do custo total do pedido. Na primeira chamada, o
+     * backend tira um snapshot dos valores calculados pelo sistema antes de aplicar o
+     * valor manual — o snapshot fica visível para sempre em {@code originalTotalValue}/
+     * {@code originalTotalCost}/{@code originalEstimatedProfit}.
+     */
+    @PatchMapping("/{id}/values")
+    public ResponseEntity<OrderResponse> updateValues(Authentication auth, @PathVariable UUID id,
+                                                        @Valid @RequestBody OrderValuesRequest request) {
+        UUID merchantId = authHelper.getMerchantId(auth);
+        OrderResponse response = orderService.updateValues(merchantId, id, request);
+        return ResponseEntity.ok(response);
+    }
+
+    /** Restaura o valor final e o custo total calculados pelo sistema, apagando a correção manual. */
+    @DeleteMapping("/{id}/values")
+    public ResponseEntity<OrderResponse> restoreValues(Authentication auth, @PathVariable UUID id) {
+        UUID merchantId = authHelper.getMerchantId(auth);
+        OrderResponse response = orderService.restoreValues(merchantId, id);
+        return ResponseEntity.ok(response);
+    }
 }
