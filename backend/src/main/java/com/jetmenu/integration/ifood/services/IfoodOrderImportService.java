@@ -149,6 +149,9 @@ public class IfoodOrderImportService {
                 .dateTime(parseCreatedAt(detail.getCreatedAt()))
                 .customer(customer)
                 .fee(null)
+                // Pedido nativo do iFood nunca tem meio de pagamento resolvido pelo JetMenu
+                // (fee sempre null aqui) — o snapshot acompanha, também sempre null.
+                .feeRate(null)
                 .status(status)
                 .totalValue(totalValue)
                 .deliveryFee(deliveryFee)

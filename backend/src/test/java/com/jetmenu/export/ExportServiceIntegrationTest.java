@@ -123,6 +123,9 @@ class ExportServiceIntegrationTest extends IntegrationTestBase {
                 .merchant(merchant).name("Pix").feeRate(new BigDecimal("0.99")).build());
         Order o = newOrder("C", "P", new BigDecimal("100.00"));
         o.setFee(fee);
+        // Snapshot da taxa vigente na venda — ExportService lê o.getFeeRate(), não
+        // fee.getFeeRate() ao vivo.
+        o.setFeeRate(fee.getFeeRate());
         orderRepository.save(o);
 
         byte[] bytes = exportService.generateDashboardExport(merchant.getId(), LocalDate.now(), LocalDate.now());

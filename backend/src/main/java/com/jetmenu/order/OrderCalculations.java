@@ -41,15 +41,18 @@ public final class OrderCalculations {
      * Todos os campos podem ser {@code null}; tratados como zero. A taxa de entrega e a taxa
      * de serviço ({@code serviceFee}, repassada ao iFood em pedidos importados via Anota.AI)
      * são deduzidas porque são repassadas à plataforma/entregador e não ficam com o
-     * restaurante. A taxa de meio de pagamento ({@code fee.feeRate}, em %) incide sobre o
-     * subtotal dos produtos ({@code totalValue − deliveryFee − serviceFee}) e também é
-     * deduzida, pois é cobrada pela plataforma/adquirente.
+     * restaurante. A taxa de meio de pagamento (em %) incide sobre o subtotal dos produtos
+     * ({@code totalValue − deliveryFee − serviceFee}) e também é deduzida, pois é cobrada
+     * pela plataforma/adquirente.
+     * <p>
+     * O percentual usado é {@code order.getFeeRate()} — o snapshot tirado na venda — e NÃO
+     * {@code order.getFee().getFeeRate()} ao vivo: a Fee pode ter sido editada depois, e isso
+     * não pode mudar o lucro de um pedido já fechado.
      */
     public static BigDecimal calculateEstimatedProfit(Order order) {
         if (order == null) return BigDecimal.ZERO;
-        BigDecimal feeRate = order.getFee() != null ? order.getFee().getFeeRate() : null;
         return calculateEstimatedProfit(order.getTotalValue(), order.getDeliveryFee(),
-                order.getServiceFee(), order.getTotalCost(), feeRate);
+                order.getServiceFee(), order.getTotalCost(), order.getFeeRate());
     }
 
     /**

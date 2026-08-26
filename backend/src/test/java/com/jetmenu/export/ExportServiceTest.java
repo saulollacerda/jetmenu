@@ -100,6 +100,9 @@ class ExportServiceTest {
                 .dateTime(dateTime)
                 .customer(customer)
                 .fee(f)
+                // Snapshot da taxa vigente na venda. Nos testes que não mexem no snapshot
+                // explicitamente, ele acompanha a Fee (comportamento de create()).
+                .feeRate(f != null ? f.getFeeRate() : null)
                 .status(OrderStatus.PAID)
                 .totalValue(totalValue)
                 .estimatedProfit(estimatedProfit)
@@ -231,6 +234,47 @@ class ExportServiceTest {
                 double feeTotal = sheet.getRow(5).getCell(1).getNumericCellValue();
                 // 100 * 0.0299 = 2.99
                 assertThat(feeTotal).isCloseTo(2.99, within(0.01));
+            }
+        }
+
+        @Test
+        @DisplayName("deve usar a taxa snapshotada no pedido, não a taxa atual da Fee")
+        void shouldUseSnapshottedFeeRateNotLiveFeeRate() throws Exception {
+            // A Fee foi editada para 25% depois da venda, mas o pedido guarda a taxa que
+            // valia então (10%) — a exportação precisa refletir o snapshot, senão diverge
+            // do que a tela de pedidos (que também lê o snapshot) mostra.
+            Fee liveFee = Fee.builder().id(UUID.randomUUID()).merchant(Merchant.builder().id(merchantId).build())
+                    .name("Cartao 10%").feeRate(new BigDecimal("25.00")).build();
+            OrderItem item = buildItem(product, 1, new BigDecimal("100.00"));
+            Order order = Order.builder()
+                    .id(UUID.randomUUID())
+                    .merchant(Merchant.builder().id(merchantId).build())
+                    .dateTime(startDate.atTime(10, 0))
+                    .customer(customer)
+                    .fee(liveFee)
+                    .feeRate(new BigDecimal("10.00"))
+                    .status(OrderStatus.PAID)
+                    .totalValue(new BigDecimal("100.00"))
+                    .estimatedProfit(new BigDecimal("30.00"))
+                    .items(List.of(item))
+                    .build();
+
+            given(orderRepository.findAllForReportByMerchantAndPeriodAndStatus(eq(merchantId), any(), any(), eq(OrderStatus.PAID)))
+                    .willReturn(List.of(order));
+
+            byte[] result = exportService.generateDashboardExport(merchantId, startDate, endDate);
+
+            try (Workbook wb = new XSSFWorkbook(new ByteArrayInputStream(result))) {
+                var sheet = wb.getSheet("Resumo Financeiro");
+                double feeTotal = sheet.getRow(5).getCell(1).getNumericCellValue();
+                // 100 × 10% = 10.00 (e NÃO 25.00, que seria a taxa ao vivo da Fee)
+                assertThat(feeTotal).isCloseTo(10.00, within(0.01));
+
+                var pedidos = wb.getSheet("Pedidos");
+                double feeRateCol = pedidos.getRow(1).getCell(3).getNumericCellValue();
+                double feeAmountCol = pedidos.getRow(1).getCell(4).getNumericCellValue();
+                assertThat(feeRateCol).isEqualTo(10.00);
+                assertThat(feeAmountCol).isCloseTo(10.00, within(0.01));
             }
         }
     }
