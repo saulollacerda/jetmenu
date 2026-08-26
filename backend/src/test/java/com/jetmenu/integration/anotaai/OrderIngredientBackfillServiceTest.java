@@ -54,6 +54,7 @@ class OrderIngredientBackfillServiceTest {
     @Mock private OrderRepository orderRepository;
     @Mock private AnotaAIClient anotaAIClient;
     @Mock private OrderCostCalculatorService costCalculatorService;
+    @Mock private com.jetmenu.order.OrderValueChangeService orderValueChangeService;
 
     @InjectMocks
     private OrderIngredientBackfillService backfillService;
@@ -374,6 +375,21 @@ class OrderIngredientBackfillServiceTest {
             // O snapshot original permanece intacto.
             assertThat(order.getOriginalTotalCost()).isEqualByComparingTo(new BigDecimal("15.00"));
         }
+
+        @Test
+        @DisplayName("deve gravar OrderValueChange (INGREDIENT_BACKFILL) quando o recomputo muda o custo/lucro")
+        void whenSubItemMatchesIngredient_shouldRecordValueChange() {
+            given(costCalculatorService.computeOrderTotalCost(order)).willReturn(new BigDecimal("20.00"));
+
+            backfillService.onIngredientCreated(event);
+
+            // buildOrder: totalValue=25.00, totalCost=15.00, estimatedProfit=10.00 (antes)
+            // depois: totalCost=20.00, estimatedProfit=25.00-20.00=5.00; totalValue não muda.
+            verify(orderValueChangeService).recordIfChanged(
+                    eq(order), eq(com.jetmenu.order.OrderValueChangeSource.INGREDIENT_BACKFILL),
+                    eq(new BigDecimal("25.00")), eq(new BigDecimal("15.00")), eq(new BigDecimal("10.00")),
+                    eq(new BigDecimal("25.00")), eq(new BigDecimal("20.00")), eq(new BigDecimal("5.0000")));
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -411,6 +427,8 @@ class OrderIngredientBackfillServiceTest {
 
         assertThat(item.getExtraIngredients()).hasSize(1);
         verify(orderRepository, never()).save(any());
+        verify(orderValueChangeService, never()).recordIfChanged(
+                any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     // -------------------------------------------------------------------------
@@ -490,6 +508,8 @@ class OrderIngredientBackfillServiceTest {
 
         assertThat(item.getExtraIngredients()).isEmpty();
         verify(orderRepository, never()).save(any());
+        verify(orderValueChangeService, never()).recordIfChanged(
+                any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     // -------------------------------------------------------------------------

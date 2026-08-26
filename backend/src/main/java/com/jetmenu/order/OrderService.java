@@ -50,6 +50,7 @@ public class OrderService {
     private final IncludeRepository includeRepository;
     private final OrderCostCalculatorService orderCostCalculatorService;
     private final OrderFichaService orderFichaService;
+    private final OrderValueChangeService orderValueChangeService;
 
     public OrderService(OrderRepository orderRepository,
                         CustomerRepository customerRepository,
@@ -59,7 +60,8 @@ public class OrderService {
                         MerchantRepository merchantRepository,
                         IncludeRepository includeRepository,
                         OrderCostCalculatorService orderCostCalculatorService,
-                        OrderFichaService orderFichaService) {
+                        OrderFichaService orderFichaService,
+                        OrderValueChangeService orderValueChangeService) {
         this.orderRepository = orderRepository;
         this.customerRepository = customerRepository;
         this.productRepository = productRepository;
@@ -69,6 +71,7 @@ public class OrderService {
         this.includeRepository = includeRepository;
         this.orderCostCalculatorService = orderCostCalculatorService;
         this.orderFichaService = orderFichaService;
+        this.orderValueChangeService = orderValueChangeService;
     }
 
     @Transactional
@@ -170,6 +173,12 @@ public class OrderService {
         Order order = orderRepository.findByIdAndMerchantId(id, merchantId)
                 .orElseThrow(() -> new OrderNotFoundException(id));
 
+        // Estado ANTES da edição — usado para gravar a trilha de auditoria (OrderValueChange)
+        // só quando a edição dos itens realmente muda algum dos três valores.
+        BigDecimal oldTotalValue = order.getTotalValue();
+        BigDecimal oldTotalCost = order.getTotalCost();
+        BigDecimal oldEstimatedProfit = order.getEstimatedProfit();
+
         Customer customer = resolveCustomer(merchantId, request);
 
         Fee fee = resolveFee(request.getFeeId(), merchantId);
@@ -214,6 +223,10 @@ public class OrderService {
         }
         order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
 
+        orderValueChangeService.recordIfChanged(order, OrderValueChangeSource.ITEM_EDIT,
+                oldTotalValue, oldTotalCost, oldEstimatedProfit,
+                order.getTotalValue(), order.getTotalCost(), order.getEstimatedProfit());
+
         Order saved = orderRepository.save(order);
         return toResponse(saved);
     }
@@ -229,6 +242,10 @@ public class OrderService {
         Order order = orderRepository.findByIdAndMerchantId(id, merchantId)
                 .orElseThrow(() -> new OrderNotFoundException(id));
 
+        BigDecimal oldTotalValue = order.getTotalValue();
+        BigDecimal oldTotalCost = order.getTotalCost();
+        BigDecimal oldEstimatedProfit = order.getEstimatedProfit();
+
         if (order.getValuesOverriddenAt() == null) {
             snapshotOriginalValues(order);
         }
@@ -236,6 +253,10 @@ public class OrderService {
         order.setTotalValue(request.getTotalValue());
         order.setTotalCost(request.getTotalCost());
         order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
+
+        orderValueChangeService.recordIfChanged(order, OrderValueChangeSource.MANUAL_OVERRIDE,
+                oldTotalValue, oldTotalCost, oldEstimatedProfit,
+                order.getTotalValue(), order.getTotalCost(), order.getEstimatedProfit());
 
         Order saved = orderRepository.save(order);
         return toResponse(saved);
@@ -281,6 +302,10 @@ public class OrderService {
             return toResponse(order);
         }
 
+        BigDecimal oldTotalValue = order.getTotalValue();
+        BigDecimal oldTotalCost = order.getTotalCost();
+        BigDecimal oldEstimatedProfit = order.getEstimatedProfit();
+
         order.setTotalValue(order.getOriginalTotalValue());
         order.setTotalCost(order.getOriginalTotalCost());
         order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
@@ -288,6 +313,10 @@ public class OrderService {
         order.setOriginalTotalCost(null);
         order.setOriginalEstimatedProfit(null);
         order.setValuesOverriddenAt(null);
+
+        orderValueChangeService.recordIfChanged(order, OrderValueChangeSource.RESTORE,
+                oldTotalValue, oldTotalCost, oldEstimatedProfit,
+                order.getTotalValue(), order.getTotalCost(), order.getEstimatedProfit());
 
         Order saved = orderRepository.save(order);
         return toResponse(saved);

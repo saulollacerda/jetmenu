@@ -45,6 +45,7 @@ class OrderServiceIntegrationTest extends IntegrationTestBase {
     @Autowired private FeeRepository feeRepository;
     @Autowired private OrderFichaLineRepository orderFichaLineRepository;
     @Autowired private OrderFichaService orderFichaService;
+    @Autowired private OrderValueChangeRepository orderValueChangeRepository;
 
     private Merchant merchant;
     private Customer customer;
@@ -325,6 +326,86 @@ class OrderServiceIntegrationTest extends IntegrationTestBase {
         // totalValue 20.00, sem custo; taxa = 20 × 12% = 2.40 → lucro = 17.60
         assertThat(persisted.getTotalValue()).isEqualByComparingTo("20.00");
         assertThat(persisted.getEstimatedProfit()).isEqualByComparingTo("17.60");
+    }
+
+    // -------------------------------------------------------------------------
+    // OrderValueChange — trilha de auditoria (V35)
+    // -------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("updateValues deve gravar OrderValueChange com source MANUAL_OVERRIDE")
+    void updateValues_shouldRecordManualOverrideChange() {
+        OrderResponse created = orderService.create(merchant.getId(), simpleRequest());
+
+        orderService.updateValues(merchant.getId(), created.getId(), OrderValuesRequest.builder()
+                .totalValue(new BigDecimal("15.00"))
+                .totalCost(new BigDecimal("5.00"))
+                .build());
+
+        List<OrderValueChange> changes = orderValueChangeRepository
+                .findByOrderIdAndMerchantIdOrderByChangedAtAsc(created.getId(), merchant.getId());
+
+        assertThat(changes).hasSize(1);
+        OrderValueChange change = changes.get(0);
+        assertThat(change.getSource()).isEqualTo(OrderValueChangeSource.MANUAL_OVERRIDE);
+        assertThat(change.getOrder().getId()).isEqualTo(created.getId());
+        assertThat(change.getMerchant().getId()).isEqualTo(merchant.getId());
+        assertThat(change.getOldTotalValue()).isEqualByComparingTo("20.00");
+        assertThat(change.getNewTotalValue()).isEqualByComparingTo("15.00");
+        assertThat(change.getOldTotalCost()).isEqualByComparingTo("0");
+        assertThat(change.getNewTotalCost()).isEqualByComparingTo("5.00");
+        assertThat(change.getChangedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("restoreValues deve gravar OrderValueChange com source RESTORE, preservando o histórico do override")
+    void restoreValues_shouldRecordRestoreChangeKeepingHistory() {
+        OrderResponse created = orderService.create(merchant.getId(), simpleRequest());
+        orderService.updateValues(merchant.getId(), created.getId(), OrderValuesRequest.builder()
+                .totalValue(new BigDecimal("15.00"))
+                .totalCost(new BigDecimal("5.00"))
+                .build());
+
+        orderService.restoreValues(merchant.getId(), created.getId());
+
+        List<OrderValueChange> changes = orderValueChangeRepository
+                .findByOrderIdAndMerchantIdOrderByChangedAtAsc(created.getId(), merchant.getId());
+
+        // Histórico completo: a linha do override permanece, e a da restauração é adicionada.
+        assertThat(changes).hasSize(2);
+        assertThat(changes.get(0).getSource()).isEqualTo(OrderValueChangeSource.MANUAL_OVERRIDE);
+        assertThat(changes.get(1).getSource()).isEqualTo(OrderValueChangeSource.RESTORE);
+        assertThat(changes.get(1).getOldTotalValue()).isEqualByComparingTo("15.00");
+        assertThat(changes.get(1).getNewTotalValue()).isEqualByComparingTo("20.00");
+    }
+
+    @Test
+    @DisplayName("update deve gravar OrderValueChange (ITEM_EDIT) só quando o total realmente muda")
+    void update_shouldRecordItemEditChangeOnlyWhenTotalChanges() {
+        OrderResponse created = orderService.create(merchant.getId(), simpleRequest());
+
+        // Edição que muda a quantidade: total muda de 20.00 (1x) para 100.00 (5x).
+        orderService.update(merchant.getId(), created.getId(), OrderRequest.builder()
+                .customerId(customer.getId())
+                .items(List.of(OrderItemRequest.builder().productId(product.getId()).quantity(5).build()))
+                .build());
+
+        List<OrderValueChange> afterFirstEdit = orderValueChangeRepository
+                .findByOrderIdAndMerchantIdOrderByChangedAtAsc(created.getId(), merchant.getId());
+        assertThat(afterFirstEdit).hasSize(1);
+        assertThat(afterFirstEdit.get(0).getSource()).isEqualTo(OrderValueChangeSource.ITEM_EDIT);
+        assertThat(afterFirstEdit.get(0).getOldTotalValue()).isEqualByComparingTo("20.00");
+        assertThat(afterFirstEdit.get(0).getNewTotalValue()).isEqualByComparingTo("100.00");
+
+        // Reenviar a mesma edição (quantidade 5) não muda nada: nenhuma linha nova.
+        orderService.update(merchant.getId(), created.getId(), OrderRequest.builder()
+                .customerId(customer.getId())
+                .items(List.of(OrderItemRequest.builder().productId(product.getId()).quantity(5).build()))
+                .build());
+
+        List<OrderValueChange> afterNoOpEdit = orderValueChangeRepository
+                .findByOrderIdAndMerchantIdOrderByChangedAtAsc(created.getId(), merchant.getId());
+        assertThat(afterNoOpEdit).hasSize(1);
     }
 
     private OrderRequest simpleRequest() {

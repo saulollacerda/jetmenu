@@ -13,6 +13,8 @@ import com.jetmenu.order.OrderItem;
 import com.jetmenu.order.OrderItemExtraIngredient;
 import com.jetmenu.order.OrderOrigin;
 import com.jetmenu.order.OrderRepository;
+import com.jetmenu.order.OrderValueChangeService;
+import com.jetmenu.order.OrderValueChangeSource;
 import com.jetmenu.product.OrderCostCalculatorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,17 +43,20 @@ public class OrderIngredientBackfillService {
     private final OrderRepository orderRepository;
     private final AnotaAIClient anotaAIClient;
     private final OrderCostCalculatorService costCalculatorService;
+    private final OrderValueChangeService orderValueChangeService;
 
     public OrderIngredientBackfillService(MerchantRepository merchantRepository,
                                           IngredientRepository ingredientRepository,
                                           OrderRepository orderRepository,
                                           AnotaAIClient anotaAIClient,
-                                          OrderCostCalculatorService costCalculatorService) {
+                                          OrderCostCalculatorService costCalculatorService,
+                                          OrderValueChangeService orderValueChangeService) {
         this.merchantRepository = merchantRepository;
         this.ingredientRepository = ingredientRepository;
         this.orderRepository = orderRepository;
         this.anotaAIClient = anotaAIClient;
         this.costCalculatorService = costCalculatorService;
+        this.orderValueChangeService = orderValueChangeService;
     }
 
     @Async
@@ -137,6 +142,10 @@ public class OrderIngredientBackfillService {
         }
 
         if (changed) {
+            BigDecimal oldTotalValue = order.getTotalValue();
+            BigDecimal oldTotalCost = order.getTotalCost();
+            BigDecimal oldEstimatedProfit = order.getEstimatedProfit();
+
             // Mesma regra de OrderService.update(): uma correção manual do custo
             // (valuesOverriddenAt != null) é uma afirmação explícita do lojista e não pode ser
             // desfeita por um recálculo automático. Sem esta guarda o pedido acabaria exibindo
@@ -146,6 +155,11 @@ public class OrderIngredientBackfillService {
                 order.setTotalCost(costCalculatorService.computeOrderTotalCost(order));
             }
             order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
+
+            orderValueChangeService.recordIfChanged(order, OrderValueChangeSource.INGREDIENT_BACKFILL,
+                    oldTotalValue, oldTotalCost, oldEstimatedProfit,
+                    order.getTotalValue(), order.getTotalCost(), order.getEstimatedProfit());
+
             orderRepository.save(order);
         }
     }
