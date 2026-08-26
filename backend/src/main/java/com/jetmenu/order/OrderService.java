@@ -50,6 +50,7 @@ public class OrderService {
     private final IncludeRepository includeRepository;
     private final OrderCostCalculatorService orderCostCalculatorService;
     private final OrderFichaService orderFichaService;
+    private final OrderValueChangeService orderValueChangeService;
 
     public OrderService(OrderRepository orderRepository,
                         CustomerRepository customerRepository,
@@ -59,7 +60,8 @@ public class OrderService {
                         MerchantRepository merchantRepository,
                         IncludeRepository includeRepository,
                         OrderCostCalculatorService orderCostCalculatorService,
-                        OrderFichaService orderFichaService) {
+                        OrderFichaService orderFichaService,
+                        OrderValueChangeService orderValueChangeService) {
         this.orderRepository = orderRepository;
         this.customerRepository = customerRepository;
         this.productRepository = productRepository;
@@ -69,6 +71,7 @@ public class OrderService {
         this.includeRepository = includeRepository;
         this.orderCostCalculatorService = orderCostCalculatorService;
         this.orderFichaService = orderFichaService;
+        this.orderValueChangeService = orderValueChangeService;
     }
 
     @Transactional
@@ -86,6 +89,8 @@ public class OrderService {
                 .dateTime(LocalDateTime.now(BRAZIL_ZONE))
                 .customer(customer)
                 .fee(fee)
+                // Snapshot da taxa vigente na venda — ver javadoc de Order.feeRate.
+                .feeRate(fee != null ? fee.getFeeRate() : null)
                 .status(OrderStatus.PAID)
                 .totalValue(totalValue)
                 .origin(request.getOrigin() != null ? request.getOrigin() : OrderOrigin.JETMENU)
@@ -170,6 +175,12 @@ public class OrderService {
         Order order = orderRepository.findByIdAndMerchantId(id, merchantId)
                 .orElseThrow(() -> new OrderNotFoundException(id));
 
+        // Estado ANTES da edição — usado para gravar a trilha de auditoria (OrderValueChange)
+        // só quando a edição dos itens realmente muda algum dos três valores.
+        BigDecimal oldTotalValue = order.getTotalValue();
+        BigDecimal oldTotalCost = order.getTotalCost();
+        BigDecimal oldEstimatedProfit = order.getEstimatedProfit();
+
         Customer customer = resolveCustomer(merchantId, request);
 
         Fee fee = resolveFee(request.getFeeId(), merchantId);
@@ -179,6 +190,15 @@ public class OrderService {
         carryOverItemObservations(order, newItems);
 
         BigDecimal totalValue = calculateTotalValue(newItems, order.getDeliveryFee(), order.getServiceFee());
+
+        // O snapshot da taxa (order.feeRate) só é refeito quando a taxa DO PEDIDO muda de
+        // verdade (id diferente, inclusive null->fee e fee->null) — editar itens, corrigir
+        // valores manualmente ou o backfill assíncrono de ingredientes nunca o tocam.
+        UUID oldFeeId = order.getFee() != null ? order.getFee().getId() : null;
+        UUID newFeeId = fee != null ? fee.getId() : null;
+        if (!java.util.Objects.equals(oldFeeId, newFeeId)) {
+            order.setFeeRate(fee != null ? fee.getFeeRate() : null);
+        }
 
         order.setCustomer(customer);
         order.setFee(fee);
@@ -214,6 +234,10 @@ public class OrderService {
         }
         order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
 
+        orderValueChangeService.recordIfChanged(order, OrderValueChangeSource.ITEM_EDIT,
+                oldTotalValue, oldTotalCost, oldEstimatedProfit,
+                order.getTotalValue(), order.getTotalCost(), order.getEstimatedProfit());
+
         Order saved = orderRepository.save(order);
         return toResponse(saved);
     }
@@ -229,6 +253,10 @@ public class OrderService {
         Order order = orderRepository.findByIdAndMerchantId(id, merchantId)
                 .orElseThrow(() -> new OrderNotFoundException(id));
 
+        BigDecimal oldTotalValue = order.getTotalValue();
+        BigDecimal oldTotalCost = order.getTotalCost();
+        BigDecimal oldEstimatedProfit = order.getEstimatedProfit();
+
         if (order.getValuesOverriddenAt() == null) {
             snapshotOriginalValues(order);
         }
@@ -236,6 +264,10 @@ public class OrderService {
         order.setTotalValue(request.getTotalValue());
         order.setTotalCost(request.getTotalCost());
         order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
+
+        orderValueChangeService.recordIfChanged(order, OrderValueChangeSource.MANUAL_OVERRIDE,
+                oldTotalValue, oldTotalCost, oldEstimatedProfit,
+                order.getTotalValue(), order.getTotalCost(), order.getEstimatedProfit());
 
         Order saved = orderRepository.save(order);
         return toResponse(saved);
@@ -256,10 +288,11 @@ public class OrderService {
                 ? order.getTotalCost()
                 : OrderCalculations.calculateTotalCost(items).add(orderFichaCost);
 
-        Fee fee = order.getFee();
+        // Taxa: snapshot do pedido (order.feeRate), nunca fee.getFeeRate() ao vivo — ver
+        // javadoc de Order.feeRate.
         BigDecimal resolvedEstimatedProfit = OrderCalculations.calculateEstimatedProfit(
                 order.getTotalValue(), order.getDeliveryFee(), order.getServiceFee(), resolvedTotalCost,
-                fee != null ? fee.getFeeRate() : null);
+                order.getFeeRate());
 
         order.setOriginalTotalValue(order.getTotalValue());
         order.setOriginalTotalCost(resolvedTotalCost);
@@ -281,6 +314,10 @@ public class OrderService {
             return toResponse(order);
         }
 
+        BigDecimal oldTotalValue = order.getTotalValue();
+        BigDecimal oldTotalCost = order.getTotalCost();
+        BigDecimal oldEstimatedProfit = order.getEstimatedProfit();
+
         order.setTotalValue(order.getOriginalTotalValue());
         order.setTotalCost(order.getOriginalTotalCost());
         order.setEstimatedProfit(OrderCalculations.calculateEstimatedProfit(order));
@@ -288,6 +325,10 @@ public class OrderService {
         order.setOriginalTotalCost(null);
         order.setOriginalEstimatedProfit(null);
         order.setValuesOverriddenAt(null);
+
+        orderValueChangeService.recordIfChanged(order, OrderValueChangeSource.RESTORE,
+                oldTotalValue, oldTotalCost, oldEstimatedProfit,
+                order.getTotalValue(), order.getTotalCost(), order.getEstimatedProfit());
 
         Order saved = orderRepository.save(order);
         return toResponse(saved);
@@ -510,10 +551,12 @@ public class OrderService {
                 ? order.getTotalCost()
                 : OrderCalculations.calculateTotalCost(items).add(orderFichaCost);
         // Lucro: recalcula sempre a partir dos valores do pedido para refletir a fórmula atual,
-        // usando o totalCost resolvido acima (snapshot ou fallback) e a taxa de meio de pagamento.
+        // usando o totalCost resolvido acima (snapshot ou fallback) e a taxa de meio de
+        // pagamento SNAPSHOTADA no pedido (order.feeRate) — nunca fee.getFeeRate() ao vivo,
+        // que mudaria o lucro de um pedido antigo quando o lojista edita a Taxa depois.
         BigDecimal estimatedProfit = OrderCalculations.calculateEstimatedProfit(
                 order.getTotalValue(), order.getDeliveryFee(), order.getServiceFee(), totalCost,
-                fee != null ? fee.getFeeRate() : null);
+                order.getFeeRate());
 
         return OrderResponse.builder()
                 .id(order.getId())
@@ -527,8 +570,10 @@ public class OrderService {
                 .serviceFee(order.getServiceFee())
                 .totalCost(totalCost)
                 .feeId(fee != null ? fee.getId() : null)
+                // feeName é lido ao vivo da Fee: renomear uma Taxa é cosmético e deve
+                // refletir no pedido. feeRate é o snapshot — ver javadoc de Order.feeRate.
                 .feeName(fee != null ? fee.getName() : null)
-                .feeRate(fee != null ? fee.getFeeRate() : null)
+                .feeRate(order.getFeeRate())
                 .items(itemResponses)
                 .origin(order.getOrigin())
                 .marginPct(computeMarginPct(estimatedProfit, order.getTotalValue(),

@@ -2,6 +2,8 @@ package com.jetmenu.integration.anotaai;
 
 import com.jetmenu.category.Category;
 import com.jetmenu.category.CategoryRepository;
+import com.jetmenu.fee.Fee;
+import com.jetmenu.fee.FeeRepository;
 import com.jetmenu.ingredient.Ingredient;
 import com.jetmenu.ingredient.IngredientRepository;
 import com.jetmenu.ingredient.IngredientStatus;
@@ -65,6 +67,7 @@ class AnotaAISyncServiceIntegrationTest extends IntegrationTestBase {
     @Autowired private NotificationRepository notificationRepository;
     @Autowired private ExternalOrderRawPayloadRepository rawPayloadRepository;
     @Autowired private com.jetmenu.order.OrderFichaLineRepository orderFichaLineRepository;
+    @Autowired private FeeRepository feeRepository;
 
     private Merchant merchant;
     private String apiKey;
@@ -347,5 +350,32 @@ class AnotaAISyncServiceIntegrationTest extends IntegrationTestBase {
                 "ord-noficha", merchant.getId()).orElseThrow();
         assertThat(order.getOrderFicha()).isEmpty();
         assertThat(order.getTotalCost()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    @DisplayName("syncOrders — grava o snapshot da taxa (feeRate) do meio de pagamento resolvido")
+    void syncOrders_shouldSnapshotFeeRateFromResolvedFee() {
+        // Fixture order_detail_simple.json traz payments[0].name = "money".
+        Category category = persistCategory("Açaí");
+        Product acai = persistProduct("Açaí 500ml", "anota-fee", category,
+                new BigDecimal("20.00"));
+        Fee fee = feeRepository.save(Fee.builder()
+                .merchant(merchant).name("money").feeRate(new BigDecimal("3.50")).build());
+
+        given(anotaAIClient.getOrderList(apiKey)).willReturn(orderListWith("ord-fee"));
+        AnotaAIOrderDetailResponse detail = AnotaAIFixtures.load(
+                "order_detail_simple.json", AnotaAIOrderDetailResponse.class);
+        detail.getInfo().setId("ord-fee");
+        detail.getInfo().getItems().get(0).setInternalId("anota-fee");
+        given(anotaAIClient.getOrderDetail(apiKey, "ord-fee")).willReturn(raw(detail));
+
+        syncService.syncOrders(merchant.getId());
+
+        Order order = orderRepository.findByExternalOrderIdAndMerchantId(
+                "ord-fee", merchant.getId()).orElseThrow();
+
+        assertThat(order.getFee()).isNotNull();
+        assertThat(order.getFee().getId()).isEqualTo(fee.getId());
+        assertThat(order.getFeeRate()).isEqualByComparingTo("3.50");
     }
 }

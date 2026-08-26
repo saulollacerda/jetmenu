@@ -137,6 +137,8 @@ public class AnotaAIOrderImportService {
                 .dateTime(parseCreatedAt(detail.getCreatedAt()))
                 .customer(customer)
                 .fee(fee)
+                // Snapshot da taxa vigente na venda — ver javadoc de Order.feeRate.
+                .feeRate(fee != null ? fee.getFeeRate() : null)
                 .status(OrderStatus.PAID)
                 .totalValue(totalValue)
                 .deliveryFee(deliveryFee)

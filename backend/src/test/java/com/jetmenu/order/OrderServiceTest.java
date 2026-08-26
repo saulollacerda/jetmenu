@@ -70,6 +70,9 @@ class OrderServiceTest {
     @Mock
     private OrderFichaService orderFichaService;
 
+    @Mock
+    private OrderValueChangeService orderValueChangeService;
+
     @InjectMocks
     private OrderService orderService;
 
@@ -755,6 +758,40 @@ class OrderServiceTest {
 
             then(orderRepository).should(never()).save(any(Order.class));
         }
+
+        @Test
+        @DisplayName("deve gravar snapshot da taxa (feeRate) a partir da Fee resolvida")
+        void shouldSnapshotFeeRateFromResolvedFee() {
+            UUID feeId = UUID.randomUUID();
+            Fee fee = Fee.builder().id(feeId).name("Cartao 10%").feeRate(new BigDecimal("10.00")).build();
+            OrderRequest withFee = OrderRequest.builder()
+                    .customerId(customerId)
+                    .feeId(feeId)
+                    .items(orderRequest.getItems())
+                    .build();
+
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(feeRepository.findByIdAndMerchantId(feeId, merchantId)).willReturn(Optional.of(fee));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.create(merchantId, withFee);
+
+            then(orderRepository).should().save(argThat(saved ->
+                    saved.getFeeRate() != null && saved.getFeeRate().compareTo(new BigDecimal("10.00")) == 0));
+        }
+
+        @Test
+        @DisplayName("deve gravar feeRate nulo quando o pedido não tem taxa")
+        void shouldSnapshotNullFeeRateWhenNoFee() {
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.create(merchantId, orderRequest);
+
+            then(orderRepository).should().save(argThat(saved -> saved.getFeeRate() == null));
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -785,6 +822,30 @@ class OrderServiceTest {
 
             assertThatThrownBy(() -> orderService.findById(merchantId, orderId))
                     .isInstanceOf(OrderNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("feeRate e estimatedProfit da resposta vêm do snapshot do pedido, não da Fee ao vivo")
+        void shouldExposeSnapshottedFeeRateNotLiveFee() {
+            // A Fee associada já foi editada para 25%, mas o pedido guarda a taxa que valia
+            // na venda (10%) — a resposta precisa refletir o snapshot, não a Taxa atual.
+            Fee liveFee = Fee.builder().id(UUID.randomUUID()).name("Cartao 10%")
+                    .feeRate(new BigDecimal("25.00")).build();
+            order.setFee(liveFee);
+            order.setFeeRate(new BigDecimal("10.00"));
+            order.setTotalValue(new BigDecimal("60.00"));
+            order.setTotalCost(new BigDecimal("20.00"));
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            OrderResponse result = orderService.findById(merchantId, orderId);
+
+            assertThat(result.getFeeRate()).isEqualByComparingTo("10.00");
+            // subtotal = 60.00; taxa = 60.00 × 10% = 6.00; lucro = 60.00 − 20.00 − 6.00 = 34.00
+            // (se lesse a Fee ao vivo seria 60 − 20 − 15 = 25.00)
+            assertThat(result.getEstimatedProfit()).isEqualByComparingTo("34.00");
+            // feeName continua ao vivo: renomear uma Taxa é cosmético.
+            assertThat(result.getFeeName()).isEqualTo("Cartao 10%");
         }
 
         @Test
@@ -1208,6 +1269,8 @@ class OrderServiceTest {
                     .deliveryFee(new BigDecimal("10.00"))
                     .totalCost(new BigDecimal("20.00"))
                     .fee(Fee.builder().name("Pix").feeRate(new BigDecimal("2.00")).build())
+                    // toResponse lê o snapshot (order.feeRate), não fee.getFeeRate() ao vivo.
+                    .feeRate(new BigDecimal("2.00"))
                     .items(new ArrayList<>())
                     .build();
 
@@ -1602,6 +1665,156 @@ class OrderServiceTest {
             assertThat(saved.getOriginalTotalValue()).isEqualByComparingTo("60.00");
             assertThat(saved.getOriginalTotalCost()).isEqualByComparingTo("24.00");
         }
+
+        @Test
+        @DisplayName("deve gravar OrderValueChange (ITEM_EDIT) quando o total muda")
+        void shouldRecordItemEditChangeWhenTotalChanges() {
+            UUID newProductId = UUID.randomUUID();
+            Product newProduct = Product.builder()
+                    .id(newProductId)
+                    .merchant(Merchant.builder().id(merchantId).build())
+                    .name("Pizza")
+                    .price(new BigDecimal("45.00"))
+                    .status(ProductStatus.ACTIVE)
+                    .build();
+            OrderRequest updateRequest = OrderRequest.builder()
+                    .customerId(customerId)
+                    .items(List.of(OrderItemRequest.builder().productId(newProductId).quantity(3).build()))
+                    .build();
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(newProductId, merchantId)).willReturn(Optional.of(newProduct));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.update(merchantId, orderId, updateRequest);
+
+            then(orderValueChangeService).should().recordIfChanged(
+                    eq(order), eq(OrderValueChangeSource.ITEM_EDIT),
+                    eq(new BigDecimal("60.00")), any(), eq(new BigDecimal("36.00")),
+                    eq(new BigDecimal("135.00")), any(), any());
+        }
+
+        @Test
+        @DisplayName("edição sem mudança de total delega ao OrderValueChangeService com old == new (que decide não gravar)")
+        void shouldDelegateNoOpItemEditToOrderValueChangeService() {
+            // totalCost já bate com o que o mock de custo devolve (24.00) — nada muda de fato.
+            // A decisão de não persistir um no-op é do OrderValueChangeService (ver
+            // OrderValueChangeServiceTest); aqui só verificamos que OrderService sempre delega
+            // com os valores corretos, deixando o filtro de no-op numa responsabilidade só.
+            order.setTotalCost(new BigDecimal("24.00"));
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(orderRepository.save(any(Order.class))).willReturn(order);
+
+            // Mesmos itens do pedido original: totalValue/totalCost/estimatedProfit não mudam.
+            orderService.update(merchantId, orderId, orderRequest);
+
+            then(orderValueChangeService).should().recordIfChanged(
+                    eq(order), eq(OrderValueChangeSource.ITEM_EDIT),
+                    eq(new BigDecimal("60.00")), eq(new BigDecimal("24.00")), eq(new BigDecimal("36.00")),
+                    eq(new BigDecimal("60.00")), eq(new BigDecimal("24.00")), eq(new BigDecimal("36.0000")));
+        }
+
+        // ---------------------------------------------------------------------
+        // Snapshot da taxa (feeRate): só refeito quando a Fee do pedido MUDA
+        // ---------------------------------------------------------------------
+
+        @Test
+        @DisplayName("deve gravar o snapshot da taxa quando o pedido ganha uma Fee (null -> fee)")
+        void shouldSnapshotFeeRateWhenFeeAssignedOnUpdate() {
+            UUID feeId = UUID.randomUUID();
+            Fee fee = Fee.builder().id(feeId).name("Pix").feeRate(new BigDecimal("5.00")).build();
+            OrderRequest withFee = OrderRequest.builder()
+                    .customerId(customerId)
+                    .feeId(feeId)
+                    .items(orderRequest.getItems())
+                    .build();
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(feeRepository.findByIdAndMerchantId(feeId, merchantId)).willReturn(Optional.of(fee));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.update(merchantId, orderId, withFee);
+
+            then(orderRepository).should().save(argThat(saved ->
+                    saved.getFeeRate() != null && saved.getFeeRate().compareTo(new BigDecimal("5.00")) == 0));
+        }
+
+        @Test
+        @DisplayName("deve atualizar o snapshot da taxa quando a Fee do pedido muda para outra")
+        void shouldRefreshFeeRateWhenFeeChangedToAnotherOnUpdate() {
+            UUID oldFeeId = UUID.randomUUID();
+            UUID newFeeId = UUID.randomUUID();
+            order.setFee(Fee.builder().id(oldFeeId).name("Pix").feeRate(new BigDecimal("5.00")).build());
+            order.setFeeRate(new BigDecimal("5.00"));
+
+            Fee newFee = Fee.builder().id(newFeeId).name("Cartao").feeRate(new BigDecimal("12.00")).build();
+            OrderRequest withNewFee = OrderRequest.builder()
+                    .customerId(customerId)
+                    .feeId(newFeeId)
+                    .items(orderRequest.getItems())
+                    .build();
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(feeRepository.findByIdAndMerchantId(newFeeId, merchantId)).willReturn(Optional.of(newFee));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.update(merchantId, orderId, withNewFee);
+
+            then(orderRepository).should().save(argThat(saved ->
+                    saved.getFeeRate().compareTo(new BigDecimal("12.00")) == 0));
+        }
+
+        @Test
+        @DisplayName("deve limpar o snapshot da taxa quando o pedido perde a Fee (fee -> null)")
+        void shouldClearFeeRateWhenFeeRemovedOnUpdate() {
+            order.setFee(Fee.builder().id(UUID.randomUUID()).name("Pix").feeRate(new BigDecimal("5.00")).build());
+            order.setFeeRate(new BigDecimal("5.00"));
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            // orderRequest não informa feeId (null) — o pedido perde a taxa.
+            orderService.update(merchantId, orderId, orderRequest);
+
+            then(orderRepository).should().save(argThat(saved -> saved.getFeeRate() == null));
+        }
+
+        @Test
+        @DisplayName("NÃO deve atualizar o snapshot da taxa quando a Fee do pedido não muda, mesmo que a Taxa tenha sido editada")
+        void shouldNotRefreshFeeRateWhenFeeUnchangedOnUpdate() {
+            UUID feeId = UUID.randomUUID();
+            order.setFee(Fee.builder().id(feeId).name("Cartao 10%").feeRate(new BigDecimal("10.00")).build());
+            order.setFeeRate(new BigDecimal("10.00"));
+
+            // A Taxa foi editada para 25% no meio tempo — resolveFee busca a Fee ATUAL do banco,
+            // mas como o id continua o mesmo, o snapshot do pedido não pode se mover.
+            Fee editedFee = Fee.builder().id(feeId).name("Cartao 10%").feeRate(new BigDecimal("25.00")).build();
+            OrderRequest sameFeeRequest = OrderRequest.builder()
+                    .customerId(customerId)
+                    .feeId(feeId)
+                    .items(orderRequest.getItems())
+                    .build();
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(customerRepository.findByIdAndMerchantId(customerId, merchantId)).willReturn(Optional.of(customer));
+            given(productRepository.findByIdAndMerchantId(productId, merchantId)).willReturn(Optional.of(product));
+            given(feeRepository.findByIdAndMerchantId(feeId, merchantId)).willReturn(Optional.of(editedFee));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.update(merchantId, orderId, sameFeeRequest);
+
+            then(orderRepository).should().save(argThat(saved ->
+                    saved.getFeeRate().compareTo(new BigDecimal("10.00")) == 0));
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -1718,6 +1931,9 @@ class OrderServiceTest {
             Fee fee = Fee.builder().id(UUID.randomUUID()).name("Cartão").feeRate(new BigDecimal("10.00")).build();
             order.setDeliveryFee(new BigDecimal("10.00"));
             order.setFee(fee);
+            // Snapshot da taxa vigente na venda — updateValues lê order.getFeeRate(), não
+            // fee.getFeeRate() ao vivo.
+            order.setFeeRate(fee.getFeeRate());
             order.setTotalValue(new BigDecimal("60.00"));
             order.setTotalCost(new BigDecimal("24.00"));
 
@@ -1782,6 +1998,29 @@ class OrderServiceTest {
 
             then(orderRepository).should(never()).save(any(Order.class));
         }
+
+        @Test
+        @DisplayName("deve gravar OrderValueChange (MANUAL_OVERRIDE) com os valores antes e depois")
+        void shouldRecordManualOverrideChange() {
+            order.setTotalValue(new BigDecimal("60.00"));
+            order.setTotalCost(new BigDecimal("24.00"));
+            order.setEstimatedProfit(new BigDecimal("36.00"));
+
+            OrderValuesRequest request = OrderValuesRequest.builder()
+                    .totalValue(new BigDecimal("50.00"))
+                    .totalCost(new BigDecimal("20.00"))
+                    .build();
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.updateValues(merchantId, orderId, request);
+
+            then(orderValueChangeService).should().recordIfChanged(
+                    eq(order), eq(OrderValueChangeSource.MANUAL_OVERRIDE),
+                    eq(new BigDecimal("60.00")), eq(new BigDecimal("24.00")), eq(new BigDecimal("36.00")),
+                    eq(new BigDecimal("50.00")), eq(new BigDecimal("20.00")), eq(new BigDecimal("30.0000")));
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -1844,6 +2083,40 @@ class OrderServiceTest {
                     .isInstanceOf(OrderNotFoundException.class);
 
             then(orderRepository).should(never()).save(any(Order.class));
+        }
+
+        @Test
+        @DisplayName("deve gravar OrderValueChange (RESTORE) com os valores antes e depois")
+        void shouldRecordRestoreChange() {
+            order.setTotalValue(new BigDecimal("50.00"));
+            order.setTotalCost(new BigDecimal("20.00"));
+            order.setEstimatedProfit(new BigDecimal("30.00"));
+            order.setOriginalTotalValue(new BigDecimal("60.00"));
+            order.setOriginalTotalCost(new BigDecimal("24.00"));
+            order.setOriginalEstimatedProfit(new BigDecimal("36.00"));
+            order.setValuesOverriddenAt(LocalDateTime.now(BRAZIL_ZONE));
+
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+            given(orderRepository.save(any(Order.class))).willAnswer(inv -> inv.getArgument(0));
+
+            orderService.restoreValues(merchantId, orderId);
+
+            then(orderValueChangeService).should().recordIfChanged(
+                    eq(order), eq(OrderValueChangeSource.RESTORE),
+                    eq(new BigDecimal("50.00")), eq(new BigDecimal("20.00")), eq(new BigDecimal("30.00")),
+                    eq(new BigDecimal("60.00")), eq(new BigDecimal("24.00")), eq(new BigDecimal("36.0000")));
+        }
+
+        @Test
+        @DisplayName("pedido nunca corrigido manualmente: no-op, não chama OrderValueChangeService")
+        void shouldNotRecordChangeWhenNeverOverridden() {
+            order.setValuesOverriddenAt(null);
+            given(orderRepository.findByIdAndMerchantId(orderId, merchantId)).willReturn(Optional.of(order));
+
+            orderService.restoreValues(merchantId, orderId);
+
+            then(orderValueChangeService).should(never()).recordIfChanged(
+                    any(), any(), any(), any(), any(), any(), any(), any());
         }
     }
 
