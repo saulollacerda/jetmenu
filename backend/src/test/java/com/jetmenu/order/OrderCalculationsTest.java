@@ -109,7 +109,10 @@ class OrderCalculationsTest {
                 .totalValue(totalValue)
                 .deliveryFee(deliveryFee)
                 .totalCost(totalCost)
+                // A Fee acompanha o pedido (feeName/feeId), mas o percentual usado no cálculo
+                // é sempre o snapshot em order.feeRate — nunca fee.getFeeRate() ao vivo.
                 .fee(Fee.builder().name("Pix").feeRate(feeRate).build())
+                .feeRate(feeRate)
                 .build();
     }
 
@@ -149,6 +152,25 @@ class OrderCalculationsTest {
         assertThat(profit).isEqualByComparingTo("33.00");
     }
 
+    @Test
+    @DisplayName("usa a taxa snapshotada em order.feeRate, ignorando fee.getFeeRate() ao vivo")
+    void shouldUseSnapshottedFeeRateInsteadOfLiveFee() {
+        // A Fee associada já foi editada (25%), mas o pedido guarda a taxa que valia na
+        // venda (10%) — o lucro precisa continuar refletindo o snapshot, não a Taxa atual.
+        Order o = Order.builder()
+                .totalValue(new BigDecimal("60.00"))
+                .totalCost(new BigDecimal("20.00"))
+                .fee(Fee.builder().name("Cartao 10%").feeRate(new BigDecimal("25")).build())
+                .feeRate(new BigDecimal("10"))
+                .build();
+
+        BigDecimal profit = OrderCalculations.calculateEstimatedProfit(o);
+
+        // subtotal = 60.00; taxa = 60.00 × 10% = 6.00; lucro = 60.00 − 20.00 − 6.00 = 34.00
+        // (se lesse fee.getFeeRate() ao vivo, seria 60 − 20 − 15 = 25.00)
+        assertThat(profit).isEqualByComparingTo("34.00");
+    }
+
     // -------------------------------------------------------------------------
     // serviceFee (taxa de serviço repassada ao iFood via Anota.AI)
     // -------------------------------------------------------------------------
@@ -186,6 +208,7 @@ class OrderCalculationsTest {
                 .serviceFee(new BigDecimal("1.00"))
                 .totalCost(BigDecimal.ZERO)
                 .fee(Fee.builder().name("Pix").feeRate(new BigDecimal("10")).build())
+                .feeRate(new BigDecimal("10"))
                 .build();
 
         BigDecimal profit = OrderCalculations.calculateEstimatedProfit(o);

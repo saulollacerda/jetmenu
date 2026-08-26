@@ -89,6 +89,8 @@ public class OrderService {
                 .dateTime(LocalDateTime.now(BRAZIL_ZONE))
                 .customer(customer)
                 .fee(fee)
+                // Snapshot da taxa vigente na venda — ver javadoc de Order.feeRate.
+                .feeRate(fee != null ? fee.getFeeRate() : null)
                 .status(OrderStatus.PAID)
                 .totalValue(totalValue)
                 .origin(request.getOrigin() != null ? request.getOrigin() : OrderOrigin.JETMENU)
@@ -189,6 +191,15 @@ public class OrderService {
 
         BigDecimal totalValue = calculateTotalValue(newItems, order.getDeliveryFee(), order.getServiceFee());
 
+        // O snapshot da taxa (order.feeRate) só é refeito quando a taxa DO PEDIDO muda de
+        // verdade (id diferente, inclusive null->fee e fee->null) — editar itens, corrigir
+        // valores manualmente ou o backfill assíncrono de ingredientes nunca o tocam.
+        UUID oldFeeId = order.getFee() != null ? order.getFee().getId() : null;
+        UUID newFeeId = fee != null ? fee.getId() : null;
+        if (!java.util.Objects.equals(oldFeeId, newFeeId)) {
+            order.setFeeRate(fee != null ? fee.getFeeRate() : null);
+        }
+
         order.setCustomer(customer);
         order.setFee(fee);
         // Uma correção manual do valor final/custo (override, ver updateValues/restoreValues) é
@@ -277,10 +288,11 @@ public class OrderService {
                 ? order.getTotalCost()
                 : OrderCalculations.calculateTotalCost(items).add(orderFichaCost);
 
-        Fee fee = order.getFee();
+        // Taxa: snapshot do pedido (order.feeRate), nunca fee.getFeeRate() ao vivo — ver
+        // javadoc de Order.feeRate.
         BigDecimal resolvedEstimatedProfit = OrderCalculations.calculateEstimatedProfit(
                 order.getTotalValue(), order.getDeliveryFee(), order.getServiceFee(), resolvedTotalCost,
-                fee != null ? fee.getFeeRate() : null);
+                order.getFeeRate());
 
         order.setOriginalTotalValue(order.getTotalValue());
         order.setOriginalTotalCost(resolvedTotalCost);
@@ -539,10 +551,12 @@ public class OrderService {
                 ? order.getTotalCost()
                 : OrderCalculations.calculateTotalCost(items).add(orderFichaCost);
         // Lucro: recalcula sempre a partir dos valores do pedido para refletir a fórmula atual,
-        // usando o totalCost resolvido acima (snapshot ou fallback) e a taxa de meio de pagamento.
+        // usando o totalCost resolvido acima (snapshot ou fallback) e a taxa de meio de
+        // pagamento SNAPSHOTADA no pedido (order.feeRate) — nunca fee.getFeeRate() ao vivo,
+        // que mudaria o lucro de um pedido antigo quando o lojista edita a Taxa depois.
         BigDecimal estimatedProfit = OrderCalculations.calculateEstimatedProfit(
                 order.getTotalValue(), order.getDeliveryFee(), order.getServiceFee(), totalCost,
-                fee != null ? fee.getFeeRate() : null);
+                order.getFeeRate());
 
         return OrderResponse.builder()
                 .id(order.getId())
@@ -556,8 +570,10 @@ public class OrderService {
                 .serviceFee(order.getServiceFee())
                 .totalCost(totalCost)
                 .feeId(fee != null ? fee.getId() : null)
+                // feeName é lido ao vivo da Fee: renomear uma Taxa é cosmético e deve
+                // refletir no pedido. feeRate é o snapshot — ver javadoc de Order.feeRate.
                 .feeName(fee != null ? fee.getName() : null)
-                .feeRate(fee != null ? fee.getFeeRate() : null)
+                .feeRate(order.getFeeRate())
                 .items(itemResponses)
                 .origin(order.getOrigin())
                 .marginPct(computeMarginPct(estimatedProfit, order.getTotalValue(),

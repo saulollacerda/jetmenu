@@ -92,9 +92,14 @@ public class ExportService {
 
         BigDecimal estimatedCost = totalSales.subtract(estimatedProfit);
 
+        // Taxa: snapshot do pedido (order.getFeeRate()), nunca fee.getFeeRate() ao vivo — ver
+        // javadoc de Order.feeRate. NOTA (pré-existente, não corrigida aqui): multiplica por
+        // totalValue em vez do subtotal (totalValue − deliveryFee − serviceFee) usado por
+        // OrderCalculations.calculateEstimatedProfit; mantido como estava, só a origem da
+        // taxa mudou.
         BigDecimal feeTotal = orders.stream()
                 .filter(o -> o.getFee() != null)
-                .map(o -> o.getTotalValue().multiply(o.getFee().getFeeRate()).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP))
+                .map(o -> o.getTotalValue().multiply(o.getFeeRate()).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP))
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(2, RoundingMode.HALF_UP);
 
@@ -140,14 +145,16 @@ public class ExportService {
             String pmName = order.getFee() != null ? order.getFee().getName() : "";
             createCell(row, 2, pmName, null);
 
+            // Snapshot do pedido (order.getFeeRate()), não fee.getFeeRate() ao vivo — ver
+            // javadoc de Order.feeRate.
             double feeRate = order.getFee() != null
-                    ? order.getFee().getFeeRate()
+                    ? order.getFeeRate()
                     .setScale(2, RoundingMode.HALF_UP).doubleValue()
                     : 0.0;
             row.createCell(3).setCellValue(feeRate);
 
             double feeAmount = order.getFee() != null
-                    ? order.getTotalValue().multiply(order.getFee().getFeeRate()).divide(BigDecimal.valueOf(100))
+                    ? order.getTotalValue().multiply(order.getFeeRate()).divide(BigDecimal.valueOf(100))
                     .setScale(2, RoundingMode.HALF_UP).doubleValue()
                     : 0.0;
             row.createCell(4).setCellValue(feeAmount);

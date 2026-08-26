@@ -51,6 +51,17 @@ public class Order {
     @JoinColumn(name = "fee_id", nullable = true)
     private Fee fee;
 
+    /**
+     * Percentual da taxa de meio de pagamento ({@link Fee#getFeeRate()}) vigente no momento
+     * da venda, copiado da {@link #fee} associada na criação do pedido. É lido aqui — nunca
+     * de {@code fee.getFeeRate()} ao vivo — porque o lojista pode editar o percentual de uma
+     * Taxa depois (tela de Taxas): sem o snapshot, o lucro de um pedido antigo mudaria
+     * sozinho e um mês já fechado seria reescrito. Refeito apenas quando a própria taxa do
+     * pedido muda (troca de Fee em {@code OrderService.update}); nulo em pedido sem taxa.
+     */
+    @Column(name = "fee_rate", precision = 19, scale = 4)
+    private BigDecimal feeRate;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private OrderStatus status;
