@@ -55,6 +55,27 @@ public class MerchantController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * Os dois valores que o lojista cola no painel da Anota.AI. Autenticado como qualquer
+     * outro {@code /me} — o segredo volta em texto porque o cadastro lá é manual e ele
+     * precisa poder recopiá-lo.
+     */
+    @GetMapping("/me/anotaai-webhook")
+    public ResponseEntity<AnotaAIWebhookConfigResponse> getAnotaAIWebhookConfig(Authentication auth) {
+        UUID merchantId = authHelper.getMerchantId(auth);
+        return ResponseEntity.ok(merchantService.getAnotaAiWebhookConfig(merchantId));
+    }
+
+    /**
+     * Gera um segredo novo e invalida o anterior. POST, não PUT: cada chamada produz um valor
+     * diferente, então repetir a mesma requisição não deixa o servidor no mesmo estado.
+     */
+    @PostMapping("/me/anotaai-webhook/rotate")
+    public ResponseEntity<AnotaAIWebhookConfigResponse> rotateAnotaAIWebhookSecret(Authentication auth) {
+        UUID merchantId = authHelper.getMerchantId(auth);
+        return ResponseEntity.ok(merchantService.rotateAnotaAiWebhookSecret(merchantId));
+    }
+
     @GetMapping("/me")
     public ResponseEntity<MerchantResponse> findMe(Authentication auth) {
         UUID merchantId = authHelper.getMerchantId(auth);

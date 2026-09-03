@@ -75,11 +75,21 @@ class AnotaAISyncServiceTest {
      * O padrão dos testes é desligada — o mesmo padrão de produção.
      */
     private AnotaAISyncService buildSyncService(boolean ifoodPreviewEnabled) {
-        return new AnotaAISyncService(anotaAIClient, merchantRepository, categoryRepository,
-                productRepository, customerRepository, feeRepository, orderRepository,
-                ingredientRepository, includeRepository, notificationService,
-                orderCostCalculatorService, rawPayloadService, orderFichaService,
-                ifoodPreviewEnabled);
+        // Os colaboradores do import são beans em produção; aqui são montados à mão sobre os
+        // mesmos mocks, para o teste continuar exercitando o import de verdade ponta a ponta.
+        var catalogSyncService = new com.jetmenu.integration.anotaai.services.AnotaAICatalogSyncService(
+                anotaAIClient, merchantRepository, categoryRepository, productRepository, includeRepository);
+        var orderImportService = new com.jetmenu.integration.anotaai.services.AnotaAIOrderImportService(
+                merchantRepository, orderRepository, feeRepository, includeRepository,
+                orderCostCalculatorService,
+                new com.jetmenu.integration.anotaai.services.AnotaAICustomerResolver(
+                        customerRepository, merchantRepository),
+                new com.jetmenu.integration.anotaai.services.AnotaAIProductResolver(productRepository),
+                new com.jetmenu.integration.anotaai.services.AnotaAIExtraIngredientResolver(
+                        ingredientRepository, notificationService),
+                orderFichaService);
+        return new AnotaAISyncService(anotaAIClient, merchantRepository, orderRepository,
+                rawPayloadService, catalogSyncService, orderImportService, ifoodPreviewEnabled);
     }
 
     @BeforeEach

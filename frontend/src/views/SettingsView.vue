@@ -7,6 +7,8 @@ import { useNotificationStore } from '@/stores/notificationStore'
 import { UI, UITopbar, UICard, UIBtn, UIField, UIInput, UIPill, UIIcon } from '@/design'
 import type { DayOfWeek, OpeningHour } from '@/types/User'
 import { ifoodAuthService, type IfoodStatusResponse } from '@/services/ifoodAuthService'
+import { anotaAIService, resolveWebhookUrl } from '@/services/anotaAIService'
+import type { AnotaAIWebhookConfig } from '@/types/AnotaAI'
 import { billingService } from '@/services/billingService'
 import type { PlanResponse, SubscriptionResponse } from '@/types/Billing'
 import { clearPendingIfoodAuth, hasPendingIfoodAuth } from '@/composables/useIfoodConnectFlow'
@@ -186,6 +188,53 @@ const showTokenForm = ref(false)
 const anotaAiConnected = computed(() => !!user.value?.anotaAiApiKey)
 const anotaAiHoursConfigured = computed(() => (user.value?.openingHours?.length ?? 0) > 0)
 
+// ── Webhook do Anota.AI ───────────────────────────────────────────────────────
+//
+// Os pedidos chegam por webhook, e o cadastro no painel do Anota.AI é manual, loja por
+// loja: a tela existe para entregar os dois valores prontos para copiar. O segredo é
+// gerado aqui, nunca escolhido pelo lojista.
+
+const webhookConfig = ref<AnotaAIWebhookConfig | null>(null)
+const webhookRotating = ref(false)
+const webhookError = ref<string | null>(null)
+const webhookCopied = ref<'url' | 'secret' | null>(null)
+
+const webhookSecret = computed(() => webhookConfig.value?.webhookSecret ?? null)
+const webhookConfigured = computed(() => !!webhookSecret.value)
+const webhookUrl = computed(() => resolveWebhookUrl(webhookConfig.value?.webhookPath))
+
+async function loadWebhookConfig() {
+  try {
+    webhookConfig.value = await anotaAIService.getWebhookConfig()
+  } catch {
+    // Uma falha aqui não pode derrubar a tela de configurações inteira: o resto das
+    // integrações continua utilizável sem o painel do webhook.
+    webhookConfig.value = null
+  }
+}
+
+async function handleRotateWebhookSecret() {
+  webhookError.value = null
+  webhookRotating.value = true
+  try {
+    webhookConfig.value = await anotaAIService.rotateWebhookSecret()
+  } catch {
+    webhookError.value = 'Não foi possível gerar o segredo. Tente novamente.'
+  } finally {
+    webhookRotating.value = false
+  }
+}
+
+async function copyToClipboard(value: string, what: 'url' | 'secret') {
+  try {
+    await navigator.clipboard?.writeText(value)
+    webhookCopied.value = what
+    setTimeout(() => (webhookCopied.value = null), 2000)
+  } catch {
+    /* navegador sem permissão de clipboard: o valor segue visível para copiar à mão */
+  }
+}
+
 async function handleSyncAnotaAIOrders() {
   anotaAIStore.clearResult()
   try {
@@ -321,7 +370,7 @@ async function loadIfoodStatus() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadProfile(), loadIfoodStatus()])
+  await Promise.all([loadProfile(), loadIfoodStatus(), loadWebhookConfig()])
   const q = route.query.section
   if (q && typeof q === 'string' && SUBNAV.some((s) => s.id === q)) {
     section.value = q as typeof section.value
@@ -959,7 +1008,122 @@ onMounted(async () => {
                 </div>
               </form>
 
-              <!-- Etapa 2 — Horários de funcionamento -->
+              <!-- Etapa 2 — Webhook de pedidos -->
+              <div
+                data-testid="anotaai-stage-webhook"
+                :style="{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '10px 12px',
+                  background: UI.bg,
+                  borderRadius: '9px',
+                  opacity: anotaAiConnected ? 1 : 0.6,
+                }"
+              >
+                <span
+                  :style="{
+                    width: '22px', height: '22px', borderRadius: '50%',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '11px', fontWeight: 700, flexShrink: 0,
+                    background: webhookConfigured ? UI.emeraldBg : UI.bgSoft,
+                    color: webhookConfigured ? UI.emerald2 : UI.textMute,
+                    border: `1px solid ${webhookConfigured ? 'transparent' : UI.border}`,
+                  }"
+                >
+                  <UIIcon v-if="webhookConfigured" name="check" :size="12" />
+                  <template v-else>2</template>
+                </span>
+                <div style="flex: 1">
+                  <div :style="{ fontSize: '12.5px', fontWeight: 600 }">Webhook de pedidos</div>
+                  <div :style="{ fontSize: '11px', color: UI.textSub }">
+                    Cadastre a URL e o token abaixo no painel do Anota.AI para receber cada
+                    pedido na hora em que ele acontece.
+                  </div>
+                </div>
+                <UIPill :color="webhookConfigured ? 'emerald' : 'gray'" size="sm" dot>
+                  {{ webhookConfigured ? 'Ativo' : 'Pendente' }}
+                </UIPill>
+                <UIBtn
+                  :variant="webhookConfigured ? 'ghost' : 'primary'"
+                  size="sm"
+                  data-testid="anotaai-stage-webhook-action"
+                  :disabled="webhookRotating"
+                  @click="handleRotateWebhookSecret"
+                >
+                  {{
+                    webhookRotating
+                      ? 'Gerando…'
+                      : webhookConfigured
+                        ? 'Gerar novo token'
+                        : 'Gerar token'
+                  }}
+                </UIBtn>
+              </div>
+
+              <div
+                v-if="webhookConfigured"
+                style="display: flex; flex-direction: column; gap: 10px; width: 100%"
+              >
+                <UIField
+                  label="URL do webhook"
+                  hint="Cole no campo de URL do painel do Anota.AI. Ela não muda quando você gera um token novo."
+                >
+                  <UIInput
+                    data-testid="anotaai-webhook-url"
+                    :model-value="webhookUrl"
+                    readonly
+                  >
+                    <template #rightAddon>
+                      <span
+                        :style="{
+                          fontSize: '11.5px',
+                          color: UI.blue,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }"
+                        @click="copyToClipboard(webhookUrl, 'url')"
+                      >
+                        {{ webhookCopied === 'url' ? 'copiado' : 'copiar' }}
+                      </span>
+                    </template>
+                  </UIInput>
+                </UIField>
+
+                <UIField
+                  label="Token externo"
+                  hint="Cole no campo de token do painel do Anota.AI. Gerar um novo invalida o anterior na hora."
+                >
+                  <UIInput
+                    data-testid="anotaai-webhook-secret"
+                    :model-value="webhookSecret ?? ''"
+                    readonly
+                  >
+                    <template #rightAddon>
+                      <span
+                        :style="{
+                          fontSize: '11.5px',
+                          color: UI.blue,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }"
+                        @click="copyToClipboard(webhookSecret ?? '', 'secret')"
+                      >
+                        {{ webhookCopied === 'secret' ? 'copiado' : 'copiar' }}
+                      </span>
+                    </template>
+                  </UIInput>
+                </UIField>
+              </div>
+
+              <div
+                v-if="webhookError"
+                :style="{ fontSize: '11.5px', color: UI.rose }"
+              >
+                {{ webhookError }}
+              </div>
+
+              <!-- Etapa 3 — Horários de funcionamento -->
               <div
                 data-testid="anotaai-stage-hours"
                 :style="{
@@ -983,7 +1147,7 @@ onMounted(async () => {
                   }"
                 >
                   <UIIcon v-if="anotaAiHoursConfigured" name="check" :size="12" />
-                  <template v-else>2</template>
+                  <template v-else>3</template>
                 </span>
                 <div style="flex: 1">
                   <div :style="{ fontSize: '12.5px', fontWeight: 600 }">Horários de funcionamento</div>
@@ -1004,7 +1168,7 @@ onMounted(async () => {
                 </UIBtn>
               </div>
 
-              <!-- Etapa 3 — Importação de pedidos -->
+              <!-- Etapa 4 — Importação de pedidos -->
               <div
                 data-testid="anotaai-stage-import"
                 :style="{
@@ -1028,7 +1192,7 @@ onMounted(async () => {
                   }"
                 >
                   <UIIcon v-if="anotaAiConnected && anotaAiHoursConfigured" name="check" :size="12" />
-                  <template v-else>3</template>
+                  <template v-else>4</template>
                 </span>
                 <div style="flex: 1">
                   <div :style="{ fontSize: '12.5px', fontWeight: 600 }">Importação de pedidos</div>

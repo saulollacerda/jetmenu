@@ -7,7 +7,9 @@ import IfoodOrderSyncModal from '@/components/IfoodOrderSyncModal.vue'
 import IfoodCatalogPublishModal from '@/components/IfoodCatalogPublishModal.vue'
 import { ifoodAuthService, type IfoodStatusResponse } from '@/services/ifoodAuthService'
 import { billingService } from '@/services/billingService'
+import { anotaAIService } from '@/services/anotaAIService'
 import type { PlanResponse, SubscriptionResponse } from '@/types/Billing'
+import type { AnotaAIWebhookConfig } from '@/types/AnotaAI'
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: { section: 'ints' } }),
@@ -58,8 +60,37 @@ vi.mock('@/services/billingService', () => ({
   },
 }))
 
+vi.mock('@/services/anotaAIService', () => ({
+  anotaAIService: {
+    getWebhookConfig: vi.fn(),
+    rotateWebhookSecret: vi.fn(),
+  },
+  resolveWebhookUrl: (path: string | null) => (path ? `https://app.jetmenu.test${path}` : ''),
+}))
+
 const mockedService = vi.mocked(ifoodAuthService)
 const mockedBilling = vi.mocked(billingService)
+const mockedAnotaAI = vi.mocked(anotaAIService)
+
+const WEBHOOK_MERCHANT_ID = '3f2504e0-4f89-11d3-9a0c-0305e82c3301'
+const WEBHOOK_PATH = `/api/webhooks/anotaai/${WEBHOOK_MERCHANT_ID}`
+
+/** Os dois campos são inputs somente-leitura: o valor está em `value`, não no texto. */
+function webhookFieldValue(wrapper: ReturnType<typeof mount>, field: 'url' | 'secret'): string {
+  return (
+    wrapper.find(`[data-testid="anotaai-webhook-${field}"]`).element as HTMLInputElement
+  ).value
+}
+
+function webhookConfigOf(overrides: Partial<AnotaAIWebhookConfig> = {}): AnotaAIWebhookConfig {
+  return {
+    merchantId: WEBHOOK_MERCHANT_ID,
+    webhookPath: WEBHOOK_PATH,
+    webhookSecret: null,
+    anotaAiMerchantId: null,
+    ...overrides,
+  }
+}
 
 const STUBS = {
   IfoodConnectModal: true,
@@ -94,6 +125,7 @@ enableAutoUnmount(afterEach)
 
 beforeEach(() => {
   mockUser = { anotaAiApiKey: null, openingHours: [] }
+  mockedAnotaAI.getWebhookConfig.mockResolvedValue(webhookConfigOf())
   anotaAIStoreMock = {
     syncingOrders: false,
     lastResult: null,
@@ -329,6 +361,73 @@ describe('SettingsView — checklist Anota.AI', () => {
 
     expect(wrapper.text()).toContain('3 pedido(s) importado(s)')
     expect(wrapper.text()).toContain('2 já existente(s)')
+  })
+})
+
+describe('SettingsView — webhook do Anota.AI', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+  })
+
+  it('sem segredo gerado: etapa pendente e nenhum valor exposto', async () => {
+    const wrapper = await mountView(statusOf())
+
+    const stage = wrapper.find('[data-testid="anotaai-stage-webhook"]')
+    expect(stage.exists()).toBe(true)
+    expect(stage.text()).toContain('Pendente')
+    expect(wrapper.find('[data-testid="anotaai-webhook-secret"]').exists()).toBe(false)
+  })
+
+  it('com segredo gerado: exibe URL e segredo prontos para copiar', async () => {
+    mockedAnotaAI.getWebhookConfig.mockResolvedValue(
+      webhookConfigOf({ webhookSecret: 'segredo-abc' }),
+    )
+    const wrapper = await mountView(statusOf())
+
+    expect(wrapper.find('[data-testid="anotaai-stage-webhook"]').text()).toContain('Ativo')
+    expect(webhookFieldValue(wrapper, 'url')).toBe(`https://app.jetmenu.test${WEBHOOK_PATH}`)
+    expect(webhookFieldValue(wrapper, 'secret')).toBe('segredo-abc')
+  })
+
+  it('gerar segredo chama a rotação e mostra o valor novo', async () => {
+    mockedAnotaAI.rotateWebhookSecret.mockResolvedValue(
+      webhookConfigOf({ webhookSecret: 'segredo-novo' }),
+    )
+    const wrapper = await mountView(statusOf())
+
+    await wrapper.find('[data-testid="anotaai-stage-webhook-action"]').trigger('click')
+    await flushPromises()
+
+    expect(mockedAnotaAI.rotateWebhookSecret).toHaveBeenCalled()
+    expect(webhookFieldValue(wrapper, 'secret')).toBe('segredo-novo')
+  })
+
+  /**
+   * Rotacionar não muda a URL: o lojista troca um campo no painel da Anota.AI, e não
+   * recadastra o endpoint inteiro. A tela precisa deixar isso evidente.
+   */
+  it('a URL não muda ao rotacionar o segredo', async () => {
+    mockedAnotaAI.getWebhookConfig.mockResolvedValue(
+      webhookConfigOf({ webhookSecret: 'segredo-antigo' }),
+    )
+    mockedAnotaAI.rotateWebhookSecret.mockResolvedValue(
+      webhookConfigOf({ webhookSecret: 'segredo-novo' }),
+    )
+    const wrapper = await mountView(statusOf())
+    const urlBefore = webhookFieldValue(wrapper, 'url')
+
+    await wrapper.find('[data-testid="anotaai-stage-webhook-action"]').trigger('click')
+    await flushPromises()
+
+    expect(webhookFieldValue(wrapper, 'url')).toBe(urlBefore)
+  })
+
+  it('falha ao carregar a configuração não quebra a tela', async () => {
+    mockedAnotaAI.getWebhookConfig.mockRejectedValue(new Error('offline'))
+    const wrapper = await mountView(statusOf())
+
+    expect(wrapper.find('[data-testid="anotaai-stage-webhook"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="anotaai-webhook-secret"]').exists()).toBe(false)
   })
 })
 

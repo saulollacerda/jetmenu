@@ -5,6 +5,8 @@ import com.jetmenu.customer.CustomerRepository;
 import com.jetmenu.integration.anotaai.AnotaAIOrderDetailResponse;
 import com.jetmenu.merchant.MerchantRepository;
 
+import org.springframework.stereotype.Component;
+
 import java.util.Optional;
 import java.util.UUID;
 
@@ -14,6 +16,7 @@ import java.util.UUID;
  * <p>Estratégia: busca por telefone dentro do merchant; se não existir, cria um novo cliente
  * com nome e identificador externos. Para payloads nulos, cria um cliente anônimo.
  */
+@Component
 public class AnotaAICustomerResolver {
 
     private final CustomerRepository customerRepository;
