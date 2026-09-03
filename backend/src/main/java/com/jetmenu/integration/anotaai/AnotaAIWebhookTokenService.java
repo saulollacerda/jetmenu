@@ -1,9 +1,8 @@
 package com.jetmenu.integration.anotaai;
 
+import com.jetmenu.common.SharedSecrets;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
 
@@ -31,17 +30,8 @@ public class AnotaAIWebhookTokenService {
         return ENCODER.encodeToString(bytes);
     }
 
-    /**
-     * Compara em <b>tempo constante</b>. {@code String.equals} retorna no primeiro byte
-     * diferente, e essa diferença de tempo é medível pela rede: dá para descobrir o segredo
-     * um caractere por vez.
-     */
+    /** Comparação em tempo constante — ver {@link SharedSecrets#matches}. */
     public boolean matches(String expected, String provided) {
-        if (expected == null || expected.isBlank() || provided == null || provided.isBlank()) {
-            return false;
-        }
-        return MessageDigest.isEqual(
-                expected.getBytes(StandardCharsets.UTF_8),
-                provided.getBytes(StandardCharsets.UTF_8));
+        return SharedSecrets.matches(expected, provided);
     }
 }

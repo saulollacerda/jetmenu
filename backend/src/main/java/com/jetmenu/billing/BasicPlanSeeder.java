@@ -3,6 +3,7 @@ package com.jetmenu.billing;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,8 +17,15 @@ import java.util.Map;
  * Seeds the "Básico" plan and gives every plan a slug. Runs first (see {@link Order}): the
  * billing backfills look this plan up by name, and would find nothing if bean discovery
  * happened to run them earlier.
+ *
+ * <p><b>Suprimido por {@code app.startup.backfills-enabled=false}</b>, que a produção usa.
+ * Isto é semeadura de ambiente novo: em produção o plano já existe há muito, e o que sobra é
+ * um punhado de consultas em cada boot — que no Cloud Run passa a ser cada instância nova. O
+ * default é ligado, para que um ambiente novo continue funcionando sem saber da flag.
  */
 @Component
+@ConditionalOnProperty(name = "app.startup.backfills-enabled", havingValue = "true",
+        matchIfMissing = true)
 @Order(BasicPlanSeeder.ORDER)
 class BasicPlanSeeder implements CommandLineRunner {
 

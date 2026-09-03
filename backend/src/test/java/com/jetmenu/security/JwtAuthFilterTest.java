@@ -94,6 +94,29 @@ class JwtAuthFilterTest {
         verify(filterChain).doFilter(request, response);
     }
 
+    /**
+     * O Cloud Scheduler chama os jobs internos com um OIDC token do Google no mesmo header
+     * {@code Authorization}. Ele nunca vai decodificar contra o JWKS do Supabase, e um 401
+     * aqui deixaria a reconciliação diária sem nunca rodar — sem erro visível deste lado.
+     * Quem autoriza esses caminhos é o IAM do Cloud Run mais o
+     * {@code X-Internal-Job-Token}, não este filtro.
+     */
+    @Test
+    @DisplayName("rota de job interno é ignorada pelo filtro — o token OIDC do Cloud Scheduler não é nosso")
+    void internalJobPath_shouldBypassTheFilter() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "POST", "/api/internal/jobs/anotaai-reconcile");
+        request.addHeader("Authorization", "Bearer token-oidc-do-google");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter().doFilter(request, response, filterChain);
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        verify(jwtDecoder, never()).decode(anyString());
+        verify(filterChain).doFilter(request, response);
+    }
+
     @Test
     @DisplayName("token inválido deve responder 401 e não seguir a cadeia")
     void invalidToken_shouldRespond401AndNotContinue() throws Exception {

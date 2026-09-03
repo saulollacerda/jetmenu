@@ -63,6 +63,14 @@ public class SecurityConfig {
                             // JwtAuthFilterTest fixes that behaviour.
                             // Covered by AnotaAIWebhookSecurityTest.
                             .requestMatchers("/api/webhooks/anotaai/**").permitAll()
+                            // Jobs internos disparados pelo Cloud Scheduler (reconciliação
+                            // diária e limpeza de payloads). Não carregam token do Supabase:
+                            // a autorização é o IAM do Cloud Run somado ao header
+                            // X-Internal-Job-Token conferido no controller, que responde 404
+                            // sem ele. Fechado por padrão — sem o token configurado, nenhuma
+                            // chamada passa (ver InternalJobAuthorizer).
+                            // Covered by InternalJobsSecurityTest.
+                            .requestMatchers("/api/internal/jobs/**").permitAll()
                             .anyRequest().authenticated()
                     )
                     // Without an explicit entry point Spring Security answers an
