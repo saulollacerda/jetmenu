@@ -48,6 +48,17 @@ public class SecurityConfig {
                             // verify against STRIPE_WEBHOOK_SECRET (see StripeEventVerifier).
                             // Covered by StripeWebhookSecurityTest.
                             .requestMatchers("/api/webhooks/stripe").permitAll()
+                            // Anota.AI's order webhooks carry no bearer token either. This
+                            // path is currently in OBSERVE mode: it records the delivery and
+                            // imports NOTHING (see AnotaAIWebhookController), which is what
+                            // makes a public endpoint safe here — there is no way to inject
+                            // an order through it. Anota.AI does not document which header
+                            // carries the "Token Externo" configured in their panel, and the
+                            // capture exists to find that out. When the endpoint moves to
+                            // ENFORCE mode it MUST start rejecting deliveries whose secret
+                            // does not match the merchant's.
+                            // Covered by AnotaAIWebhookSecurityTest.
+                            .requestMatchers("/api/webhooks/anotaai/**").permitAll()
                             .anyRequest().authenticated()
                     )
                     // Without an explicit entry point Spring Security answers an
