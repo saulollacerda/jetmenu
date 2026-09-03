@@ -1,7 +1,13 @@
 # Anota.AI Integration
 
 JetMenu integrates with Anota.AI to import orders and sync the product catalog.
-Authentication: partner token via `Authorization: Bearer <token>` header, configured per merchant.
+
+Two directions, two credentials — do not mix them up:
+
+| Direction | Credential |
+|---|---|
+| **JetMenu → Anota.AI** (catalog, `/ping/*`) | Partner token per merchant, `Authorization: Bearer <token>` |
+| **Anota.AI → JetMenu** (order webhook) | Per-merchant "Token Externo", `authorization: <raw value>` — **no `Bearer`**, and no signature |
 
 ## Base URLs
 
@@ -14,73 +20,120 @@ Authentication: partner token via `Authorization: Bearer <token>` header, config
 
 | Value | Meaning |
 |---|---|
-| `0` | Pending — not yet imported |
-| `1` | Acknowledged / imported by JetMenu |
+| `0` | Pending |
+| `1` | Acknowledged |
 | `2` | In preparation / dispatched (iFood flow) |
 | `3` | Completed / delivered |
 
-**Import only orders with `check: 0`.**
+**JetMenu does not read this field** (`grep getCheck` → no hits), and the webhook delivery
+captured in production arrives with `check: 1`. An earlier version of this doc said "import
+only orders with `check: 0`"; that is a rule of the PDV flow, not of the financial import,
+which wants every order regardless of where it sits in the kitchen.
 
 ## Integration Architecture
 
-Orders flow through the `anotaai-adapter` microservice — the backend core has no direct dependency on AnotaAI.
+Anota.AI delivers each order to JetMenu by **webhook**, straight into the backend. There is no
+adapter, no message broker and no intermediate service.
 
 ```
-AnotaAI ──► POST /webhook/orders/{merchantId} ──► anotaai-adapter ──► RabbitMQ [menubank.external-orders] ──► backend consumer ──► DB
-Admin   ──► POST /catalog/sync/{merchantId}   ──► anotaai-adapter ──► AnotaAI API ──► RabbitMQ [menubank.catalog-sync] ──► backend consumer ──► DB
+Anota.AI ──► POST /api/webhooks/anotaai/{merchantId} ──► AnotaAIWebhookController
+                                                     ──► AnotaAIWebhookService ──► AnotaAIOrderImportService ──► DB
 ```
 
-The adapter is **multi-tenant**: webhook URL contains the `merchantId`. The adapter fetches the merchant's API key from the core via `GET /api/internal/merchants/{merchantId}/anotaai-key` when needed (catalog sync).
+> **This section used to describe something else entirely** — an `anotaai-adapter`
+> microservice publishing `ExternalOrderMessage` to a RabbitMQ queue, a
+> `GET /api/internal/merchants/{id}/anotaai-key` endpoint and a `POST /webhook/orders/{id}`
+> route. None of it exists in this repository, and none of it ever did: it is MenuBank-era
+> architecture (`../MenuBank/`) that survived commit `ea294ec docs: rename MenuBank to
+> JetMenu`, a rename that never revised the content. Verified: no AMQP in `pom.xml`, no
+> consumer, none of those classes or routes.
 
-The pull-based sync (`AnotaAIController`, `AnotaAISyncService`, `OrderSyncScheduler`) is **still
-present and active** in the backend — see [Pull-based Sync](#pull-based-sync-still-in-the-backend)
-below. It is the path the iFood order preview flag hooks into.
+The pull-based sync is still in the code but **no longer runs in production** — see
+[Pull-based Sync](#pull-based-sync-development-and-reconciliation-only) below.
 
 ## Webhook — Incoming Order Payload
 
-AnotaAI sends the full order detail directly in the webhook body (same structure as the old `/ping/get/{id}` response). The adapter maps it to an `ExternalOrderMessage` and publishes to the queue.
+The contract below was established by capturing a real delivery in production, not from
+Anota.AI's documentation, which describes the adapter that does not exist.
 
-**Webhook URL registered in AnotaAI:** `POST https://<adapter-host>/webhook/orders/{merchantId}`
-**Security:** `X-Webhook-Secret` header validated against `WEBHOOK_SECRET` env var.
+| | |
+|---|---|
+| **Method** | `POST` (their panel also offers `PUT`; the route accepts both) |
+| **URL** | `POST https://<backend-host>/api/webhooks/anotaai/{merchantId}` — the merchant's JetMenu UUID |
+| **Credential** | Header **`authorization`**, the raw "Token Externo" value — **no `Bearer` prefix** |
+| **Signature** | **None.** No HMAC header of any kind, so `client_id`/`client_secret` play no part |
+| **Body** | The order at the **root**, with no `{success, info}` envelope |
+| **Client** | `axios/1.18.0` from AWS us-east-1, with Sentry headers |
 
-## Canonical Message Format (`ExternalOrderMessage`)
+### The body is NOT the `/ping/get/{id}` shape
 
-```json
-{
-  "externalOrderId": "6a0e094aa2335ae5e05c5eae",
-  "merchantId": "uuid",
-  "origin": "ANOTA_AI",
-  "createdAt": "2026-05-20T19:19:38.368Z",
-  "paymentName": "ifood-online-pix-payin",
-  "deliveryFee": 0.0,
-  "total": 25.99,
-  "customer": { "name": "Maria Santos", "phone": "11912345678", "taxId": null },
-  "items": [
-    {
-      "internalId": "66c3adfc0fae7c422a4a6c9a",
-      "externalId": "",
-      "name": "Açaí 500 ml",
-      "quantity": 1,
-      "price": 21.99,
-      "subItems": [
-        { "name": "Açaí Zero", "quantity": 1, "price": 0.0, "internalId": "679ab6c7207b65c7415b6614" }
-      ]
-    }
-  ]
-}
-```
+This is the single most dangerous thing on this page, and an earlier version of it got the
+answer wrong ("same structure as the old `/ping/get/{id}` response").
 
-## Pull-based Sync (still in the backend)
+`/ping/get/{id}` answers `{success, info}`. The webhook sends the order at the root. So the
+body maps to `AnotaAIOrderDetailResponse.OrderDetail` — the **inner** class — and binding it to
+`AnotaAIOrderDetailResponse` **throws no exception**: every class there carries
+`@JsonIgnoreProperties(ignoreUnknown = true)`, so the mismatch deserializes to
+`success=false, info=null`. Every consumer null-guards `getInfo()` and moves on, which means
+orders would be answered `200`, imported nowhere, and reported as no error at all.
 
-Alongside the adapter, the backend still runs the original pull-based sync — it is what
-`POST /api/anotaai/orders` and `OrderSyncScheduler` (every 10 min, for open merchants with an
-API key) drive:
+Because absence of an exception proves nothing here, `AnotaAIWebhookService` validates the
+result before importing: no `_id` or no `items` is a `400`, never a silent `200`.
+
+### Security
+
+The secret arrives in `authorization` (an earlier version of this doc said
+`X-Webhook-Secret` — that header name belonged to the MenuBank adapter). Since Anota.AI signs
+nothing, that shared secret is the **only** credential on a public route:
+
+- Generated by JetMenu with `SecureRandom` (`AnotaAIWebhookTokenService`) and shown in the
+  Settings screen — registering it in Anota.AI's panel is manual, store by store.
+- Compared in constant time (`MessageDigest.isEqual`).
+- Stored as text, not a hash, because the merchant must be able to copy it again — same choice
+  Stripe makes with `whsec_` and the same as `anota_ai_api_key` in that table.
+- Rotating it does **not** change the URL, which is why `merchantId` rides raw in the path
+  instead of an opaque token.
+
+A third check catches cross-registration: the body's `merchant.id` (Anota.AI's own store id, a
+Mongo ObjectId) is stored in `anotaai_integration.anota_ai_merchant_id` on the first delivery
+and enforced afterwards. Without it, pasting store A's URL and token into store B's panel
+passes every other check and files B's orders under A.
+
+| Situation | Response |
+|---|---|
+| Imported, or a duplicate we already have | `200` |
+| Secret missing or wrong | `404` — does not confirm the merchant exists |
+| `merchant.id` mismatch | `404` |
+| Body that yields no usable order | `400` |
+| Our failure (database down, …) | `5xx` — we want the redelivery |
+
+**Never log the header or the body.** Every delivery carries a customer's name, phone and
+address, and the header carries a credential. The raw body is written to
+`external_order_raw_payload` (3-day retention, much narrower access than logs).
+
+## Pull-based Sync (development and reconciliation only)
+
+The original pull-based sync is untouched and still drives `POST /api/anotaai/orders`:
 
 ```
 poll /ping/list → filter by salesChannel → fetch each via /ping/get/{id} → persist locally
 ```
 
-Entry points: `AnotaAIController`, `OrderSyncScheduler` → `AnotaAISyncService.syncOrders`.
+What changed is who calls it:
+
+- **`OrderSyncScheduler` (every 10 min) only exists with `anotaai.polling-enabled=true`** — the
+  default in dev, off in production. In production the webhook brings the orders; the scheduler
+  was a JVM kept awake around the clock, which is what stopped the service from scaling to zero.
+- **`POST /api/internal/jobs/anotaai-reconcile`** runs the same sync once a day for every
+  merchant with a key, as the safety net for a lost webhook delivery. It drops the
+  opening-hours filter: a nightly sweep that only looks at open stores would reconcile nobody.
+
+Both paths are idempotent by `existsByExternalOrderId` plus the
+`uk_orders_merchant_external_order` unique index, so running the webhook, the polling and the
+reconciliation at the same time cannot duplicate an order.
+
+Entry points: `AnotaAIController`, `AnotaAIReconciliationService`, `OrderSyncScheduler` →
+`AnotaAISyncService.syncOrders`.
 
 ## iFood Order Preview — temporary feature flag
 
@@ -131,6 +184,13 @@ sync now stamps it, and `V33__backfill_product_canonical_name.sql` fills existin
 ```
 
 ### Get order detail — `GET /ping/get/{orderId}`
+
+> The two examples below are the **polling** shape: order wrapped in `{success, info}`. The
+> webhook sends the same order at the **root** — see
+> [The body is NOT the `/ping/get/{id}` shape](#the-body-is-not-the-ping-getid-shape). The
+> `order_detail_*.json` fixtures follow the envelope shape here and must not be used to test
+> the webhook; that one has its own fixture, `webhook_order_realizado.json`, taken from a real
+> delivery.
 
 ---
 
