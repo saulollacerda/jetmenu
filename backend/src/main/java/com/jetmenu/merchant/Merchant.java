@@ -132,4 +132,31 @@ public class Merchant {
         }
         anotaAiIntegration.setAnotaAiApiKey(anotaAiApiKey);
     }
+
+    /** Segredo do webhook da Anota.AI — ver {@code AnotaAiIntegration.webhookSecret}. */
+    public String getAnotaAiWebhookSecret() {
+        return anotaAiIntegration != null ? anotaAiIntegration.getWebhookSecret() : null;
+    }
+
+    public void setAnotaAiWebhookSecret(String webhookSecret) {
+        if (anotaAiIntegration == null && webhookSecret == null) return;
+        ensureAnotaAiIntegration().setWebhookSecret(webhookSecret);
+    }
+
+    /** Id da loja do lado da Anota.AI — ver {@code AnotaAiIntegration.anotaAiMerchantId}. */
+    public String getAnotaAiMerchantId() {
+        return anotaAiIntegration != null ? anotaAiIntegration.getAnotaAiMerchantId() : null;
+    }
+
+    public void setAnotaAiMerchantId(String anotaAiMerchantId) {
+        if (anotaAiIntegration == null && anotaAiMerchantId == null) return;
+        ensureAnotaAiIntegration().setAnotaAiMerchantId(anotaAiMerchantId);
+    }
+
+    private AnotaAiIntegration ensureAnotaAiIntegration() {
+        if (anotaAiIntegration == null) {
+            anotaAiIntegration = AnotaAiIntegration.builder().merchant(this).build();
+        }
+        return anotaAiIntegration;
+    }
 }

@@ -4,6 +4,7 @@ import com.jetmenu.merchant.MerchantRepository;
 import com.jetmenu.merchant.OpeningHour;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -13,7 +14,23 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
 
+/**
+ * Polling dos pedidos do Anota.AI, a cada 10 minutos, para as lojas abertas naquele instante.
+ *
+ * <p><b>Existe apenas com {@code anotaai.polling-enabled=true}</b>, e o default é não existir.
+ * Em produção quem traz os pedidos é o webhook ({@code AnotaAIWebhookController}), que entrega
+ * na hora e sem tráfego de saída; este polling fica ligado só em desenvolvimento, onde não há
+ * URL pública para a Anota.AI chamar.
+ *
+ * <p>O gate está na existência do bean, e não no corpo do método: um {@code if} aqui dentro
+ * ainda acordaria a JVM a cada 10 minutos, e é esse tráfego constante que impede o serviço de
+ * escalar a zero — o objetivo inteiro da migração para o Cloud Run.
+ *
+ * <p>O código continua inteiro porque {@link AnotaAISyncService#syncOrders} vira a
+ * reconciliação diária, a rede de segurança para a entrega de webhook que se perder.
+ */
 @Component
+@ConditionalOnProperty(name = "anotaai.polling-enabled", havingValue = "true", matchIfMissing = false)
 public class OrderSyncScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(OrderSyncScheduler.class);

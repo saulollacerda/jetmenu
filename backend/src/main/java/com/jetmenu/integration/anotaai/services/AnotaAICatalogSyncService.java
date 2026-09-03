@@ -18,6 +18,8 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.stereotype.Component;
+
 import java.util.Optional;
 import java.util.UUID;
 
@@ -27,6 +29,7 @@ import java.util.UUID;
  * <p>Ignora categorias com {@code is_additional: true} — esses complementos são
  * gerenciados manualmente como {@link com.jetmenu.ingredient.Ingredient}.
  */
+@Component
 public class AnotaAICatalogSyncService {
 
     private static final Logger log = LoggerFactory.getLogger(AnotaAICatalogSyncService.class);

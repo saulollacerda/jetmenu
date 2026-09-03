@@ -5,6 +5,8 @@ import com.jetmenu.integration.anotaai.AnotaAIOrderDetailResponse;
 import com.jetmenu.product.Product;
 import com.jetmenu.product.ProductRepository;
 
+import org.springframework.stereotype.Component;
+
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,6 +23,7 @@ import java.util.UUID;
  *       {@link AnotaAIExtraIngredientResolver}.</li>
  * </ol>
  */
+@Component
 public class AnotaAIProductResolver {
 
     private final ProductRepository productRepository;

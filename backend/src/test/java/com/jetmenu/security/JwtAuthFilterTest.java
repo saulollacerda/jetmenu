@@ -18,6 +18,7 @@ import org.springframework.security.oauth2.jwt.JwtException;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -69,6 +70,50 @@ class JwtAuthFilterTest {
         filter().doFilter(request, response, filterChain);
 
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        verify(filterChain).doFilter(request, response);
+    }
+
+    /**
+     * The Anota.AI webhook depends on this: it carries the merchant's shared secret in the
+     * very same {@code Authorization} header, as a raw value with no {@code Bearer} prefix
+     * (confirmed by the delivery captured in production). Making this filter try to decode
+     * such a value — or answer 401 for it — silently breaks every order import.
+     */
+    @Test
+    @DisplayName("Authorization sem prefixo Bearer deve seguir a cadeia sem autenticar e sem 401")
+    void nonBearerHeader_shouldPassThroughUntouched() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("Authorization", "segredo-cru-do-webhook-da-anota");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter().doFilter(request, response, filterChain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        assertThat(response.getStatus()).isEqualTo(200);
+        verify(jwtDecoder, never()).decode(anyString());
+        verify(filterChain).doFilter(request, response);
+    }
+
+    /**
+     * O Cloud Scheduler chama os jobs internos com um OIDC token do Google no mesmo header
+     * {@code Authorization}. Ele nunca vai decodificar contra o JWKS do Supabase, e um 401
+     * aqui deixaria a reconciliação diária sem nunca rodar — sem erro visível deste lado.
+     * Quem autoriza esses caminhos é o IAM do Cloud Run mais o
+     * {@code X-Internal-Job-Token}, não este filtro.
+     */
+    @Test
+    @DisplayName("rota de job interno é ignorada pelo filtro — o token OIDC do Cloud Scheduler não é nosso")
+    void internalJobPath_shouldBypassTheFilter() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "POST", "/api/internal/jobs/anotaai-reconcile");
+        request.addHeader("Authorization", "Bearer token-oidc-do-google");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter().doFilter(request, response, filterChain);
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        verify(jwtDecoder, never()).decode(anyString());
         verify(filterChain).doFilter(request, response);
     }
 

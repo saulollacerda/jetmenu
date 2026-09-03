@@ -1,0 +1,74 @@
+{
+  "_id": "68b8f0c4d1e2a30012ab34cd",
+  "check": 1,
+  "type": "DELIVERY",
+  "salesChannel": "anotaai",
+  "from": "menu-share-adm",
+  "shortReference": 1042,
+  "createdAt": "2026-09-03T21:14:07.512Z",
+  "total": 59.98,
+  "deliveryFee": 4,
+  "additionalFees": [],
+  "discounts": [],
+  "merchant": {
+    "id": "66c3ada81acfe90018b7ca85",
+    "name": "Loja de Teste"
+  },
+  "customer": {
+    "id": "66d0000000000000000c1e01",
+    "name": "Fulana de Tal",
+    "phone": "43999990000"
+  },
+  "items": [
+    {
+      "_id": 0,
+      "name": "Açaí 500ml",
+      "quantity": 1,
+      "price": 27.99,
+      "total": 27.99,
+      "internalId": "68a1b2c3d4e5f60012340001",
+      "externalId": "",
+      "subItems": [
+        { "name": "Leite Ninho", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350001", "externalId": "" },
+        { "name": "Granola", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350002", "externalId": "" },
+        { "name": "Banana", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350003", "externalId": "" },
+        { "name": "Morango", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350004", "externalId": "" },
+        { "name": "Leite Condensado", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350005", "externalId": "" },
+        { "name": "Paçoca", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350006", "externalId": "" },
+        { "name": "Sim", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350007", "externalId": "" },
+        { "name": "Colher", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350008", "externalId": "" },
+        { "name": "Sem açúcar", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350009", "externalId": "" },
+        { "name": "Copo 500ml", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350010", "externalId": "" }
+      ]
+    },
+    {
+      "_id": 0,
+      "name": "Açaí 500ml",
+      "quantity": 1,
+      "price": 27.99,
+      "total": 27.99,
+      "internalId": "68a1b2c3d4e5f60012340001",
+      "externalId": "",
+      "subItems": [
+        { "name": "Leite Ninho", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350001", "externalId": "" },
+        { "name": "Granola", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350002", "externalId": "" },
+        { "name": "Kiwi", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350011", "externalId": "" },
+        { "name": "Ovomaltine", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350012", "externalId": "" },
+        { "name": "Sim", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350007", "externalId": "" },
+        { "name": "Colher", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350008", "externalId": "" },
+        { "name": "Copo 500ml", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350010", "externalId": "" },
+        { "name": "Com açúcar", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350013", "externalId": "" },
+        { "name": "Mel", "quantity": 1, "price": 0, "total": 0, "internalId": "68a1b2c3d4e5f60012350014", "externalId": "" }
+      ]
+    }
+  ],
+  "payments": [
+    {
+      "name": "Pix",
+      "code": "pix",
+      "value": "59.98",
+      "prepaid": true
+    }
+  ],
+  "observation": null
+}

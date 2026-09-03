@@ -1,36 +1,33 @@
 package com.jetmenu.integration.anotaai;
 
-import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Locale;
-import java.util.Map;
-
 /**
- * Receives Anota.AI's order webhooks, currently in OBSERVE mode: every delivery is recorded
- * and <b>nothing is imported</b>.
- * <p>
- * Anota.AI does not document the webhook contract, so this endpoint exists to find out what
- * they really send — which header carries the "Token Externo", whether any signature header
- * comes along, and the exact body shape. Until that is known there is nothing to validate
- * against, so the path is public in {@code SecurityConfig}; that is safe precisely
- * <i>because</i> the endpoint imports nothing, leaving an attacker no way to inject an order.
- * <p>
- * Orders keep arriving through the existing polling ({@link OrderSyncScheduler}) during this
- * window, so answering 200 without importing loses nothing.
- * <p>
- * <b>It always answers 200.</b> A rejected delivery is a lost sample, and a webhook that
- * returns errors tends to get retried or switched off on the provider's side.
+ * Recebe os pedidos que a Anota.AI entrega por webhook.
+ *
+ * <p>O contrato foi estabelecido por captura em produção, não pela documentação deles (que
+ * descreve outra coisa): a credencial chega no header {@code authorization} com o valor
+ * <b>cru</b>, sem {@code Bearer}; <b>não há assinatura</b> nenhuma; e o pedido vem na
+ * <b>raiz</b> do corpo, sem o envelope {@code {success, info}} do {@code /ping/get/{id}}.
+ *
+ * <p>Esta rota é {@code permitAll()} no {@code SecurityConfig} porque a Anota.AI não manda
+ * bearer token. Quem autentica é o segredo compartilhado, conferido em
+ * {@link AnotaAIWebhookService} — e é a única credencial que existe aqui.
+ *
+ * <p><b>Os códigos de resposta são o protocolo com eles:</b> {@code 200} significa
+ * "entregue, pare de reenviar" (inclusive para duplicata e para canal que não importamos),
+ * {@code 404} esconde de quem não tem o segredo até se o merchant existe, {@code 400} recusa
+ * corpo que não é um pedido de verdade, e {@code 5xx} pede o reenvio.
  */
 @RestController
 @RequestMapping("/api/webhooks/anotaai")
@@ -38,46 +35,54 @@ public class AnotaAIWebhookController {
 
     private static final Logger log = LoggerFactory.getLogger(AnotaAIWebhookController.class);
 
-    private final AnotaAIWebhookObserver observer;
+    private final AnotaAIWebhookService webhookService;
 
-    public AnotaAIWebhookController(AnotaAIWebhookObserver observer) {
-        this.observer = observer;
+    public AnotaAIWebhookController(AnotaAIWebhookService webhookService) {
+        this.webhookService = webhookService;
     }
 
     /**
-     * The merchant id is bound as {@code String}, not {@code UUID}: a value Spring cannot
-     * convert would be answered 400 before reaching the capture, and a malformed path is
-     * itself something worth recording.
+     * O {@code merchantId} é vinculado como {@code String}, não como {@code UUID}: um valor
+     * que o Spring não converte viraria 400 antes de chegar ao serviço, e o que queremos para
+     * ele é o mesmo 404 de qualquer outra entrega que não reconhecemos.
      * <p>
-     * The panel offers POST or PUT per event, so both are accepted — which of them Anota.AI
-     * actually uses is part of what this capture answers.
+     * O corpo vem como {@code byte[]} porque a validação precisa distinguir "corpo ausente"
+     * de "corpo que não é um pedido" — os dois viram 400, mas por caminhos diferentes, e
+     * deixar o Spring desserializar apagaria a diferença respondendo 400 sem passar pelo
+     * serviço.
+     * <p>
+     * O painel da Anota.AI oferece POST ou PUT por evento; a captura mostrou POST, e PUT
+     * segue aceito para não quebrar um lojista já cadastrado com ele.
      */
     @RequestMapping(value = "/{merchantId}", method = {RequestMethod.POST, RequestMethod.PUT})
-    public ResponseEntity<Void> handle(@PathVariable String merchantId,
-                                       @RequestBody(required = false) byte[] rawPayload,
-                                       HttpServletRequest request) {
+    public ResponseEntity<Void> handle(
+            @PathVariable String merchantId,
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestBody(required = false) byte[] rawPayload) {
 
-        String body = rawPayload == null ? "" : new String(rawPayload, StandardCharsets.UTF_8);
-
-        try {
-            observer.capture(merchantId, request.getMethod(), request.getRequestURI(),
-                    collectHeaders(request), body);
-        } catch (RuntimeException e) {
-            log.error("[Anota.AI][OBSERVE] captura falhou, respondendo 200 assim mesmo: {}",
-                    e.getMessage(), e);
-        }
-
+        AnotaAIWebhookService.Outcome outcome = webhookService.handle(merchantId, authorization, rawPayload);
+        log.debug("[Anota.AI][webhook] entrega processada — merchant={} resultado={}", merchantId, outcome);
         return ResponseEntity.ok().build();
     }
 
     /**
-     * Every header, unfiltered and lower-cased. The unknown ones are the point of the
-     * exercise — the name of the header carrying the "Token Externo" is not documented.
+     * 404, e não 401/403: quem manda um segredo errado não pode nem descobrir que o merchant
+     * daquela URL existe. O corpo vai vazio de propósito — não há nada que a Anota.AI possa
+     * fazer com uma explicação, e há muito que um atacante faria.
      */
-    private Map<String, String> collectHeaders(HttpServletRequest request) {
-        Map<String, String> headers = new LinkedHashMap<>();
-        Collections.list(request.getHeaderNames())
-                .forEach(name -> headers.put(name.toLowerCase(Locale.ROOT), request.getHeader(name)));
-        return headers;
+    @ExceptionHandler(AnotaAIWebhookService.UnknownDeliveryException.class)
+    public ResponseEntity<Void> handleUnknownDelivery(AnotaAIWebhookService.UnknownDeliveryException e) {
+        log.warn("[Anota.AI][webhook] entrega recusada: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+    }
+
+    /**
+     * 400 para corpo que não vira pedido. Responder 200 aqui é o que reabriria a falha
+     * silenciosa que a captura evitou: entrega aceita, pedido nenhum importado, ninguém sabe.
+     */
+    @ExceptionHandler(AnotaAIWebhookService.InvalidPayloadException.class)
+    public ResponseEntity<Void> handleInvalidPayload(AnotaAIWebhookService.InvalidPayloadException e) {
+        log.warn("[Anota.AI][webhook] corpo recusado: {}", e.getMessage());
+        return ResponseEntity.badRequest().build();
     }
 }

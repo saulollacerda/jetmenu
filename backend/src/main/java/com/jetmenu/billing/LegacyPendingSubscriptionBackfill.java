@@ -5,6 +5,7 @@ import com.jetmenu.merchant.MerchantRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,8 +40,16 @@ import java.util.stream.Collectors;
  * included) are never touched, so a running trial cannot be duplicated or overwritten.
  *
  * <p>Runs after {@link BasicPlanSeeder} (see {@link Order}), which seeds that plan.
+ *
+ * <p><b>Suprimido por {@code app.startup.backfills-enabled=false}</b>, que a produção usa.
+ * Este é o trabalho de boot mais caro que sobrou: dois {@code findAll()} inteiros —
+ * assinaturas e merchants — carregados em memória <i>mesmo quando não há nada a fazer</i>,
+ * porque é justamente essa leitura que descobre que não há. A migração legada já foi feita em
+ * produção; o que restava era pagar a conta dela em cada instância nova do Cloud Run.
  */
 @Component
+@ConditionalOnProperty(name = "app.startup.backfills-enabled", havingValue = "true",
+        matchIfMissing = true)
 @Order(LegacyPendingSubscriptionBackfill.ORDER)
 class LegacyPendingSubscriptionBackfill implements CommandLineRunner {
 

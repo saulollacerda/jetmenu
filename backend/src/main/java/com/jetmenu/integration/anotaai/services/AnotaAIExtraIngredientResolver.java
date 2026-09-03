@@ -15,6 +15,8 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.stereotype.Component;
+
 import java.util.Set;
 import java.util.UUID;
 
@@ -42,6 +44,7 @@ import java.util.UUID;
  * {@code salePriceTotal}) vem literalmente do payload. Um subItem com preço {@code 0.0} é
  * complemento base — incluso no produto, mas ainda assim com custo de produção.
  */
+@Component
 public class AnotaAIExtraIngredientResolver {
 
     private final IngredientRepository ingredientRepository;

@@ -2,6 +2,7 @@ package com.jetmenu.integration.ifood;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -23,8 +24,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Sem ela haveria duas chamadas a {@code /events:polling} na mesma janela — exatamente o que
  * o rate limit do iFood barra — e duas execuções concorrentes lendo o registro de
  * deduplicação antes de qualquer gravação, fazendo o mesmo evento ser processado duas vezes.
+ *
+ * <p><b>Existe apenas com {@code ifood.polling-enabled=true}</b>, e o default é não existir.
+ * O gate está na existência do bean, e não no corpo do método, porque o que precisa sumir é o
+ * tick: um {@code if} lá dentro ainda acordaria a JVM a cada 30 segundos, e é esse tráfego
+ * constante que impede o serviço de escalar a zero. Em produção a flag fica desligada junto
+ * com {@code ifood.connection-enabled} — nenhum lojista depende do iFood enquanto a
+ * homologação não anda. Nada aqui foi removido: religar é mudar a variável de ambiente.
  */
 @Component
+@ConditionalOnProperty(name = "ifood.polling-enabled", havingValue = "true", matchIfMissing = false)
 public class IfoodOrderSyncScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(IfoodOrderSyncScheduler.class);

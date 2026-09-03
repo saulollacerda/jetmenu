@@ -48,17 +48,29 @@ public class SecurityConfig {
                             // verify against STRIPE_WEBHOOK_SECRET (see StripeEventVerifier).
                             // Covered by StripeWebhookSecurityTest.
                             .requestMatchers("/api/webhooks/stripe").permitAll()
-                            // Anota.AI's order webhooks carry no bearer token either. This
-                            // path is currently in OBSERVE mode: it records the delivery and
-                            // imports NOTHING (see AnotaAIWebhookController), which is what
-                            // makes a public endpoint safe here — there is no way to inject
-                            // an order through it. Anota.AI does not document which header
-                            // carries the "Token Externo" configured in their panel, and the
-                            // capture exists to find that out. When the endpoint moves to
-                            // ENFORCE mode it MUST start rejecting deliveries whose secret
-                            // does not match the merchant's.
+                            // Anota.AI's order webhooks carry no bearer token either, so this
+                            // path MUST stay public — otherwise every delivery is rejected
+                            // with 401 and no order is ever imported. It is not
+                            // unauthenticated in practice: the endpoint refuses any delivery
+                            // whose "Token Externo" does not match that merchant's
+                            // webhook_secret (see AnotaAIWebhookService), answering 404 so a
+                            // caller without the secret cannot even confirm the merchant
+                            // exists. That shared secret is the ONLY credential here —
+                            // unlike Stripe, Anota.AI signs nothing.
+                            // The secret travels in the same Authorization header JwtAuthFilter
+                            // reads, as a raw value with no "Bearer" prefix; the filter's
+                            // early return for non-Bearer values is what lets it through, and
+                            // JwtAuthFilterTest fixes that behaviour.
                             // Covered by AnotaAIWebhookSecurityTest.
                             .requestMatchers("/api/webhooks/anotaai/**").permitAll()
+                            // Jobs internos disparados pelo Cloud Scheduler (reconciliação
+                            // diária e limpeza de payloads). Não carregam token do Supabase:
+                            // a autorização é o IAM do Cloud Run somado ao header
+                            // X-Internal-Job-Token conferido no controller, que responde 404
+                            // sem ele. Fechado por padrão — sem o token configurado, nenhuma
+                            // chamada passa (ver InternalJobAuthorizer).
+                            // Covered by InternalJobsSecurityTest.
+                            .requestMatchers("/api/internal/jobs/**").permitAll()
                             .anyRequest().authenticated()
                     )
                     // Without an explicit entry point Spring Security answers an

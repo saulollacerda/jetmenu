@@ -28,10 +28,24 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
+    /**
+     * Jobs internos chamados pelo Cloud Scheduler. Eles chegam com um OIDC token do Google no
+     * header {@code Authorization} — que nunca vai decodificar contra o JWKS do Supabase. Sem
+     * este bypass, a reconciliação diária seria respondida com 401 e nunca rodaria. Quem
+     * autoriza esses caminhos é o IAM do Cloud Run mais o {@code X-Internal-Job-Token}
+     * conferido no controller.
+     */
+    private static final String INTERNAL_JOBS_PREFIX = "/api/internal/jobs/";
+
     private final JwtDecoder jwtDecoder;
 
     public JwtAuthFilter(JwtDecoder jwtDecoder) {
         this.jwtDecoder = jwtDecoder;
+    }
+
+    @Override
+    protected boolean shouldNotFilter(@NonNull HttpServletRequest request) {
+        return request.getRequestURI().startsWith(INTERNAL_JOBS_PREFIX);
     }
 
     @Override

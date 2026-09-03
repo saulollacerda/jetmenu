@@ -65,39 +65,19 @@ public class AnotaAISyncService {
 
     public AnotaAISyncService(AnotaAIClient anotaAIClient,
                                MerchantRepository merchantRepository,
-                               CategoryRepository categoryRepository,
-                               ProductRepository productRepository,
-                               CustomerRepository customerRepository,
-                               FeeRepository feeRepository,
                                OrderRepository orderRepository,
-                               IngredientRepository ingredientRepository,
-                               IncludeRepository includeRepository,
-                               NotificationService notificationService,
-                               OrderCostCalculatorService orderCostCalculatorService,
                                ExternalOrderRawPayloadService rawPayloadService,
-                               com.jetmenu.order.OrderFichaService orderFichaService,
+                               AnotaAICatalogSyncService catalogSyncService,
+                               AnotaAIOrderImportService orderImportService,
                                @Value("${anotaai.import-ifood-orders-enabled:false}")
                                boolean ifoodOrdersImportEnabled) {
         this.anotaAIClient = anotaAIClient;
         this.merchantRepository = merchantRepository;
         this.orderRepository = orderRepository;
         this.rawPayloadService = rawPayloadService;
+        this.catalogSyncService = catalogSyncService;
+        this.orderImportService = orderImportService;
         this.ifoodOrdersImportEnabled = ifoodOrdersImportEnabled;
-
-        this.catalogSyncService = new AnotaAICatalogSyncService(
-                anotaAIClient, merchantRepository, categoryRepository,
-                productRepository, includeRepository);
-
-        AnotaAICustomerResolver customerResolver = new AnotaAICustomerResolver(
-                customerRepository, merchantRepository);
-        AnotaAIProductResolver productResolver = new AnotaAIProductResolver(productRepository);
-        AnotaAIExtraIngredientResolver extraIngredientResolver = new AnotaAIExtraIngredientResolver(
-                ingredientRepository, notificationService);
-
-        this.orderImportService = new AnotaAIOrderImportService(
-                merchantRepository, orderRepository, feeRepository, includeRepository,
-                orderCostCalculatorService, customerResolver, productResolver, extraIngredientResolver,
-                orderFichaService);
     }
 
     @Transactional
@@ -184,14 +164,8 @@ public class AnotaAISyncService {
         return result;
     }
 
-    /**
-     * Traduz o {@code salesChannel} da Anota.AI na origem com que o pedido é gravado.
-     * Retorna {@code null} para canais que não devem ser importados.
-     */
     private OrderOrigin resolveOrigin(String salesChannel) {
-        if ("anotaai".equalsIgnoreCase(salesChannel)) return OrderOrigin.ANOTA_AI;
-        if (ifoodOrdersImportEnabled && "ifood".equalsIgnoreCase(salesChannel)) return OrderOrigin.IFOOD;
-        return null;
+        return AnotaAIOrderOrigins.resolve(salesChannel, ifoodOrdersImportEnabled);
     }
 
     private String resolveApiKey(UUID merchantId) {

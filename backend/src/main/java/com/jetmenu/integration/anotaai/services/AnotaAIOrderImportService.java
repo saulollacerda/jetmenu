@@ -20,11 +20,15 @@ import com.jetmenu.product.ProductCostCalculator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -35,6 +39,7 @@ import java.util.UUID;
  * e {@link OrderItemExtraIngredient}s. Delega as resoluções de cliente, produto e extras
  * para os resolvers especializados.
  */
+@Component
 public class AnotaAIOrderImportService {
 
     private static final Logger log = LoggerFactory.getLogger(AnotaAIOrderImportService.class);
@@ -73,6 +78,26 @@ public class AnotaAIOrderImportService {
         this.orderFichaService = orderFichaService;
     }
 
+    /**
+     * Importa um pedido só — a forma do webhook, onde cada entrega traz exatamente um
+     * pedido. Os dois parâmetros de escopo de lote da assinatura completa perdem o sentido
+     * aqui: o conjunto de ingredientes faltantes é descartável (só existe para agregar o
+     * relatório de um lote) e o latch de catálogo cobre um pedido apenas.
+     * <p>
+     * A transação abre aqui, no caminho do webhook. No caminho do polling este método é
+     * chamado de dentro da transação de {@code AnotaAISyncService.syncOrders} e apenas se
+     * junta a ela — a propagação padrão é REQUIRED, então nada muda por lá.
+     */
+    @Transactional
+    public void importOrder(AnotaAIOrderDetailResponse.OrderDetail detail,
+                             UUID merchantId,
+                             OrderOrigin origin,
+                             Runnable onCatalogSyncRequested) {
+        importOrder(detail, merchantId, origin, new LinkedHashSet<>(),
+                onCatalogSyncRequested, new boolean[]{ false });
+    }
+
+    @Transactional
     public void importOrder(AnotaAIOrderDetailResponse.OrderDetail detail,
                              UUID merchantId,
                              OrderOrigin origin,

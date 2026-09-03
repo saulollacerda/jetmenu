@@ -3,6 +3,7 @@ package com.jetmenu.merchant;
 import com.jetmenu.billing.SubscriptionService;
 import com.jetmenu.common.ForbiddenException;
 import com.jetmenu.config.CacheConfig;
+import com.jetmenu.integration.anotaai.AnotaAIWebhookTokenService;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -14,16 +15,59 @@ import java.util.UUID;
 @Service
 public class MerchantService {
 
+    /** Prefixo da rota pública do webhook — ver {@code AnotaAIWebhookController}. */
+    private static final String ANOTAAI_WEBHOOK_PATH_PREFIX = "/api/webhooks/anotaai/";
+
     private final MerchantRepository merchantRepository;
     private final PasswordEncoder passwordEncoder;
     private final SubscriptionService subscriptionService;
+    private final AnotaAIWebhookTokenService anotaAiWebhookTokenService;
 
     public MerchantService(MerchantRepository merchantRepository,
                            PasswordEncoder passwordEncoder,
-                           SubscriptionService subscriptionService) {
+                           SubscriptionService subscriptionService,
+                           AnotaAIWebhookTokenService anotaAiWebhookTokenService) {
         this.merchantRepository = merchantRepository;
         this.passwordEncoder = passwordEncoder;
         this.subscriptionService = subscriptionService;
+        this.anotaAiWebhookTokenService = anotaAiWebhookTokenService;
+    }
+
+    /**
+     * Gera um segredo novo para o webhook da Anota.AI e descarta o anterior.
+     * <p>
+     * <b>Quem gera é o JetMenu</b>, com {@code SecureRandom}: lojista que inventa segredo
+     * escreve {@code 123456}, e como a Anota.AI não assina as entregas esse valor é a única
+     * coisa separando a contabilidade da loja de quem descobrir a URL.
+     * <p>
+     * Rotacionar <b>não muda a URL</b> — o lojista troca um campo no painel deles, não
+     * recadastra o endpoint. Enquanto a rotação não é feita no painel, as entregas passam a
+     * ser recusadas com 404; o sync de reconciliação diário cobre a janela.
+     */
+    @Transactional
+    public AnotaAIWebhookConfigResponse rotateAnotaAiWebhookSecret(UUID currentMerchantId) {
+        Merchant merchant = findWithAnotaAiIntegration(currentMerchantId);
+        merchant.setAnotaAiWebhookSecret(anotaAiWebhookTokenService.generateSecret());
+        merchantRepository.save(merchant);
+        return toAnotaAiWebhookConfig(merchant);
+    }
+
+    public AnotaAIWebhookConfigResponse getAnotaAiWebhookConfig(UUID currentMerchantId) {
+        return toAnotaAiWebhookConfig(findWithAnotaAiIntegration(currentMerchantId));
+    }
+
+    private Merchant findWithAnotaAiIntegration(UUID merchantId) {
+        return merchantRepository.findByIdWithAnotaAiIntegration(merchantId)
+                .orElseThrow(() -> new MerchantNotFoundException(merchantId));
+    }
+
+    private AnotaAIWebhookConfigResponse toAnotaAiWebhookConfig(Merchant merchant) {
+        return AnotaAIWebhookConfigResponse.builder()
+                .merchantId(merchant.getId())
+                .webhookPath(ANOTAAI_WEBHOOK_PATH_PREFIX + merchant.getId())
+                .webhookSecret(merchant.getAnotaAiWebhookSecret())
+                .anotaAiMerchantId(merchant.getAnotaAiMerchantId())
+                .build();
     }
 
     public MerchantResponse create(MerchantRequest request) {

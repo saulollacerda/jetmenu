@@ -4,6 +4,7 @@ import com.jetmenu.billing.Plan;
 import com.jetmenu.billing.PlanRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -25,8 +26,18 @@ import java.util.List;
  * the next restart — orders, menu, everything — for merchants who already paid. Checkout
  * already fails loudly and specifically for the affected plan (see {@link StripePriceResolver});
  * this only moves the discovery earlier.
+ *
+ * <p><b>Suprimido por {@code app.startup.stripe-catalog-sync-enabled=false}</b>, que a
+ * produção usa. É o trabalho de boot mais caro que existia: uma ida à API da Stripe, com
+ * transação aberta durante a chamada de rede. No Railway isso custava uma vez por deploy; no
+ * Cloud Run custaria a cada instância nova, somando latência externa a todo cold start. O
+ * catálogo muda raramente, então em produção quem sincroniza é o Cloud Scheduler, uma vez por
+ * dia, em {@code POST /api/internal/jobs/stripe-catalog-sync}. Em desenvolvimento continua no
+ * boot, onde a conveniência vale mais que os segundos.
  */
 @Component
+@ConditionalOnProperty(name = "app.startup.stripe-catalog-sync-enabled", havingValue = "true",
+        matchIfMissing = true)
 class StripeCatalogSyncRunner {
 
     private static final Logger log = LoggerFactory.getLogger(StripeCatalogSyncRunner.class);

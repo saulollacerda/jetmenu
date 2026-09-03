@@ -6,6 +6,7 @@ import com.jetmenu.merchant.MerchantRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,7 +15,16 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+/**
+ * Dá categoria aos produtos legados que ficaram sem uma.
+ *
+ * <p><b>Suprimido por {@code app.startup.backfills-enabled=false}</b>, que a produção usa: é
+ * uma migração de uma vez só que roda a cada boot, e no Cloud Run isso vira a cada instância
+ * nova. O default é ligado — desligar é decisão de quem já migrou.
+ */
 @Component
+@ConditionalOnProperty(name = "app.startup.backfills-enabled", havingValue = "true",
+        matchIfMissing = true)
 class LegacyProductCategoryBackfill implements CommandLineRunner {
 
     private static final String DEFAULT_NAME = "Sem categoria";
